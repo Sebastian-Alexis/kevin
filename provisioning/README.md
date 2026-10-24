@@ -33,11 +33,13 @@ After first boot, install the stack from the repo root:
 On the 4B the USB-C port is both the power input and the HID gadget port, so the target computer it plugs
 into also powers it.
 
-Dev AP on the workstation (TP-Link Archer T2U Plus, rtw88_8821au): NetworkManager's AP mode never let
-clients finish auth on this driver, so run hostapd + dnsmasq directly (NAT out of the default route,
-802.11n/WMM off; with them on, the AP dropped client data frames):
+Dev AP on the controller (TP-Link Archer T2U Plus, rtw88_8821au): NetworkManager's AP mode never let
+clients finish auth on this driver, so `dev-ap/ap-up.sh` runs hostapd + dnsmasq directly (NAT out of any
+other interface, 802.11n/WMM off; with them on, the AP dropped client data frames). Install it as the
+`ai-kvm-ap` systemd service (starts at boot, restarts if the dongle drops; leases persist in
+`/var/lib/ai-kvm-ap/leases`, so the Pi keeps its address):
 
-    sudo dev-ap/ap-up.sh <wlx...> <psk-file>      # foreground; Ctrl-C tears down; leases in /run/ai-kvm-ap/leases
+    sudo dev-ap/install.sh <wlx...> <psk-file>
 
 macOS targets: the bridge presents a single-block (DVI) monitor EDID, `pi/video/edid.hex`. With a CEA-861
 extension block macOS classifies the display as a TV and auto-mirrors to it, dropping the Mac's panel to 720p.

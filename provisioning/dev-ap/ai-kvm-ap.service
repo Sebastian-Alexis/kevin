@@ -1,0 +1,14 @@
+[Unit]
+Description=ai-kvm dev Wi-Fi AP for the Pi (hostapd + dnsmasq + NAT)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+# AP_IFACE (the USB Wi-Fi dongle, e.g. wlx98254afe5ebd) lives in /etc/ai-kvm/ap.env; the WPA2 PSK in /etc/ai-kvm/wifi.psk (0600).
+EnvironmentFile=/etc/ai-kvm/ap.env
+ExecStart=/usr/local/lib/ai-kvm/ap-up.sh ${AP_IFACE} /etc/ai-kvm/wifi.psk
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
