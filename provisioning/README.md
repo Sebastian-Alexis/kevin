@@ -38,3 +38,7 @@ clients finish auth on this driver, so run hostapd + dnsmasq directly (NAT out o
 802.11n/WMM off; with them on, the AP dropped client data frames):
 
     sudo dev-ap/ap-up.sh <wlx...> <psk-file>      # foreground; Ctrl-C tears down; leases in /run/ai-kvm-ap/leases
+
+macOS targets: run `swift host/macos/kvm-mirror.swift` on the Mac once while the KVM display is connected.
+It makes the capture display mirror the built-in panel (which keeps its own HiDPI resolution) instead of
+macOS dropping the panel to the capture's 1280x720; macOS saves the arrangement and reapplies it on reconnect.
