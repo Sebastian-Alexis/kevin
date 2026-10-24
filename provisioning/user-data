@@ -1,0 +1,34 @@
+#cloud-config
+hostname: ai-kvm
+manage_etc_hosts: true
+timezone: America/Los_Angeles
+keyboard:
+  model: pc105
+  layout: us
+ssh_pwauth: true
+users:
+- name: kvm
+  gecos: AI KVM
+  groups: [adm, dialout, audio, users, sudo, video, plugdev, input, gpio, spi, i2c, netdev, render]
+  sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: <SHA512-CRYPT-HASH: openssl passwd -6>
+  ssh_authorized_keys:
+  - <YOUR-SSH-PUBKEY>
+packages:
+- avahi-daemon
+- git
+- i2c-tools
+- v4l-utils
+write_files:
+- path: /etc/modules-load.d/ai-kvm.conf
+  content: |
+    libcomposite
+    dwc2
+- path: /etc/NetworkManager/conf.d/wifi-powersave.conf
+  content: |
+    [connection]
+    wifi.powersave = 2
+runcmd:
+- [ systemctl, enable, --now, avahi-daemon ]

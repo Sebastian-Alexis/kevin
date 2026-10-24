@@ -1,0 +1,10 @@
+network:
+  version: 2
+  wifis:
+    wlan0:
+      dhcp4: true
+      optional: false
+      regulatory-domain: US
+      access-points:
+        ai-kvm-net:
+          password: "<WIFI-PSK>"
