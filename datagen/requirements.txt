@@ -7,3 +7,4 @@ pydantic>=2
 pyobjc-framework-ApplicationServices>=10; sys_platform == "darwin"
 pyobjc-framework-Quartz>=10; sys_platform == "darwin"
 pyobjc-framework-Cocoa>=10; sys_platform == "darwin"
+mlx-vlm>=0.7; sys_platform == "darwin" and platform_machine == "arm64"   # local eval (training/serve_mlx.sh)

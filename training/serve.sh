@@ -14,7 +14,7 @@ MAX_PIXELS=1003520   # must match lora_sft.yaml image_max_pixels
 [ -x .venv-serve/bin/vllm ] && export PATH="$PWD/.venv-serve/bin:$PATH"
 
 common=(--host 127.0.0.1 --port "$PORT" --max-model-len 8192 --trust-remote-code
-        --limit-mm-per-prompt '{"image":1}' --mm-processor-kwargs "{\"max_pixels\":$MAX_PIXELS}"
+        --limit-mm-per-prompt '{"image":1}' --mm-processor-kwargs "{\"size\":{\"longest_edge\":$MAX_PIXELS,\"shortest_edge\":65536}}"
         --gpu-memory-utilization 0.85)
 [ -n "${VLLM_API_KEY:-}" ] && common+=(--api-key "$VLLM_API_KEY")
 

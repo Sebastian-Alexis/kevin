@@ -2,12 +2,17 @@
 
   python training/eval_grounding.py --split val --model base           # zero-shot
   python training/eval_grounding.py --split gold --model actor         # fine-tuned, real capture path
-  python training/eval_grounding.py --split gold --model base --native-prompt "Locate: {instruction}" --show 10
+  python training/eval_grounding.py --split val --model base --native-owl --show 10   # GUI-Owl's own grounding prompt
 
 Metrics: click hit rate (point inside target bbox), action-type accuracy, exact match for type/key, latency.
 Also reports the raw coordinate range: if x/y regularly exceed 1000 the model is emitting pixels, not 0..1000
 (that's the Task 1 coordinate probe for GUI-Owl).
+
+--native-owl uses GUI-Owl's published grounding system prompt (shared/gui_owl_grounding_system.txt, from
+X-PLUG/MobileAgent eval_grounding_benchmarks.py): screen declared as 1000x1000, answer is a computer_use
+left_click tool call. Only click samples are scored in that mode.
 """
+import re
 import argparse
 import base64
 import json
@@ -25,12 +30,14 @@ from common import DATA  # noqa: E402
 from shared import actions  # noqa: E402
 
 PROMPT = (ROOT / "shared" / "actor_prompt.txt").read_text().strip()
+OWL_SYSTEM = (ROOT / "shared" / "gui_owl_grounding_system.txt").read_text()
+OWL_COORD = re.compile(r"\[\s*(\d+)\s*,\s*(\d+)\s*\]|\((\d+),\s*(\d+)\)")
 
 
-def call(url, model, key, img_path, text, max_tokens=64):
+def call(url, model, key, img_path, text, max_tokens=64, system=None):
     b64 = base64.b64encode(img_path.read_bytes()).decode()
     body = {"model": model, "max_tokens": max_tokens, "temperature": 0,
-            "messages": [{"role": "user", "content": [
+            "messages": ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": [
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
                 {"type": "text", "text": text}]}]}
     req = urllib.request.Request(f"{url}/chat/completions", json.dumps(body).encode(),
@@ -41,8 +48,19 @@ def call(url, model, key, img_path, text, max_tokens=64):
     return out["choices"][0]["message"]["content"], (time.monotonic() - t0) * 1000
 
 
+def owl_to_action(raw):
+    """GUI-Owl tool call -> our click JSON (last coordinate pair wins, like their eval)."""
+    pairs = [(a or c, b or d) for a, b, c, d in OWL_COORD.findall(raw)]
+    if not pairs:
+        return raw
+    x, y = pairs[-1]
+    return json.dumps({"action": "click", "x": min(int(x), 1000), "y": min(int(y), 1000)})
+
+
 def score(rec, raw, args):
     gold = json.loads(rec["messages"][1]["content"])
+    if args.native_owl:
+        raw = owl_to_action(raw)
     is_click = gold["action"] == "click"
     res = {"type_ok": False, "hit": False if is_click else None, "exact": None if is_click else False, "raw": raw}
     try:
@@ -75,6 +93,7 @@ def main():
     ap.add_argument("--api-key", default="EMPTY")
     ap.add_argument("-n", type=int, default=300)
     ap.add_argument("--native-prompt", help="override prompt template; {instruction} is substituted")
+    ap.add_argument("--native-owl", action="store_true", help="GUI-Owl's own grounding prompt (clicks only)")
     ap.add_argument("--pad", type=int, default=0, help="bbox padding in 0..1000 units")
     ap.add_argument("--radius", type=int, default=20, help="hit radius when no bbox")
     ap.add_argument("--workers", type=int, default=4)
@@ -82,14 +101,22 @@ def main():
     ap.add_argument("--export", default=str(DATA / "export"))
     args = ap.parse_args()
 
-    recs = json.loads((Path(args.export) / f"hid_actor_{args.split}.json").read_text())[: args.n]
+    recs = json.loads((Path(args.export) / f"hid_actor_{args.split}.json").read_text())
+    if args.native_owl:
+        recs = [r for r in recs if '"action":"click"' in r["messages"][1]["content"]]
+    recs = recs[: args.n]
     if not recs:
         sys.exit(f"split {args.split} is empty")
     tmpl = args.native_prompt or PROMPT
 
     def run(rec):
         intent = rec["messages"][0]["content"].rsplit("Instruction: ", 1)[-1]
-        raw, ms = call(args.url, args.model, args.api_key, DATA / rec["images"][0], tmpl.replace("{instruction}", intent))
+        if args.native_owl:
+            raw, ms = call(args.url, args.model, args.api_key, DATA / rec["images"][0], intent,
+                           max_tokens=128, system=OWL_SYSTEM)
+        else:
+            raw, ms = call(args.url, args.model, args.api_key, DATA / rec["images"][0],
+                           tmpl.replace("{instruction}", intent))
         return rec, score(rec, raw, args), ms
 
     with ThreadPoolExecutor(args.workers) as pool:
