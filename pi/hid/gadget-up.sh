@@ -10,13 +10,18 @@ modprobe libcomposite
 mkdir -p "$G"
 cd "$G"
 
-echo 0x1d6b > idVendor   # Linux Foundation
-echo 0x0104 > idProduct  # Multifunction Composite Gadget
+# Identify as an Apple ANSI keyboard (Aluminium, 05ac:024f). macOS knows Apple keyboards' layout, so it never
+# opens Keyboard Setup Assistant, which would otherwise pop up on every new Mac and steal the keystrokes the
+# first-plug setup sends (the display-mirroring dialog is answered with Return). Trade-off: on macOS (and Linux
+# hid-apple) F1-F12 act as media keys (brightness, Mission Control, ...) unless the target enabled standard F-keys.
+echo 0x05ac > idVendor
+echo 0x024f > idProduct
 echo 0x0100 > bcdDevice
 echo 0x0200 > bcdUSB
 
 mkdir -p strings/0x409
-echo "0000000000001" > strings/0x409/serialnumber
+SERIAL=$(tr -d '\0' < /proc/device-tree/serial-number 2>/dev/null || echo 0000000000000001)
+echo "$SERIAL"       > strings/0x409/serialnumber
 echo "ai-kvm"        > strings/0x409/manufacturer
 echo "AI KVM HID"    > strings/0x409/product
 

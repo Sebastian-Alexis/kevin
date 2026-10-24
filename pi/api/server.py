@@ -1,6 +1,6 @@
 """ai-kvm control API: HTTP/JSON for agents. Stdlib only (runs on ARMv6 Pi OS python3).
 
-GET  /health                      -> {"ok": true, "hid": bool, "video": bool}
+GET  /health                      -> {"ok", "hid", "usb", "video", "signal", "resolution", "fps", "boot_id", "uptime"}
 GET  /screenshot                  -> image/jpeg (latest frame from ustreamer)
 GET  /stream                      -> MJPEG proxy redirect target (ustreamer /stream)
 POST /actions  {"actions": [...]} -> run a batch sequentially, one HTTP round trip
@@ -30,6 +30,30 @@ STREAM = os.environ.get("AIKVM_STREAM", "http://127.0.0.1:8081")
 
 kbd = Keyboard()
 mouse = Mouse()
+
+
+def read(path, default=""):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def usb_state():
+    """UDC state as the target host sees the gadget: "configured" once a host enumerated it."""
+    try:
+        return read(os.path.join("/sys/class/udc", os.listdir("/sys/class/udc")[0], "state"), "unknown")
+    except (OSError, IndexError):
+        return "unknown"
+
+
+def video_source():
+    try:
+        with urllib.request.urlopen(STREAM + "/state", timeout=1) as r:
+            return json.load(r)["result"]["source"]
+    except Exception:
+        return None
 
 
 def _abs(a, kx, ky):
@@ -91,13 +115,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            video = True
-            try:
-                urllib.request.urlopen(STREAM + "/state", timeout=1).read()
-            except Exception:
-                video = False
+            src = video_source()
             hid = os.path.exists(kbd.dev) and os.path.exists(mouse.dev)
-            return self._json(200, {"ok": True, "hid": hid, "video": video})
+            res = (src or {}).get("resolution") or {}
+            return self._json(200, {
+                "ok": True, "hid": hid, "usb": usb_state(), "video": src is not None,
+                "signal": bool(src and src.get("online")), "resolution": [res.get("width"), res.get("height")],
+                "fps": (src or {}).get("captured_fps"),
+                "boot_id": read("/proc/sys/kernel/random/boot_id"),
+                "uptime": float(read("/proc/uptime", "0").split()[0]),
+            })
         if self.path.startswith("/screenshot"):
             try:
                 r = urllib.request.urlopen(STREAM + "/snapshot", timeout=3)

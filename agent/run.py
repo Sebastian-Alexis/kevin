@@ -54,14 +54,19 @@ def parse(text):
             return json.loads(text[start:i + 1])
     raise ValueError(f"unterminated JSON in reply: {text[:200]!r}")
 
+
 def point(text):
-    """(x, y) on the 0-1000 grid from a grounding reply: point_2d, or the center of a bbox_2d."""
-    lists = [[float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", m)] for m in re.findall(r"\[([^\[\]]*)\]", text)]
-    for nums in lists:
-        if len(nums) >= 4:
-            return (nums[0] + nums[2]) / 2, (nums[1] + nums[3]) / 2
-        if len(nums) >= 2:
-            return nums[0], nums[1]
+    """(x, y) on the 0-1000 grid from a grounding reply: point_2d, or the center of a bbox_2d.
+    Tolerates the model's occasional malformed brackets, e.g. {"point_2d": [899, 435}."""
+    text = re.sub(r"\w*_2d", "", text)          # the "2" in point_2d / bbox_2d is not a coordinate
+    start = text.find("[")
+    if start < 0:
+        raise ValueError(f"no point in grounding reply: {text[:120]!r}")
+    nums = [float(n) for n in re.findall(r"-?\d+(?:\.\d+)?", text[start:])]
+    if len(nums) >= 4:
+        return (nums[0] + nums[2]) / 2, (nums[1] + nums[3]) / 2
+    if len(nums) >= 2:
+        return nums[0], nums[1]
     raise ValueError(f"no point in grounding reply: {text[:120]!r}")
 
 
