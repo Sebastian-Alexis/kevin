@@ -18,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ImageContent, TextContent
 
+from .cu import Session as CU
 from .executor import Executor
 from .kvm import KVM
 from .vlm import VLM, load_key
@@ -129,6 +130,55 @@ def act(actions: list[str], expect: str = "") -> list:
     out = [TextContent(type="text", text="\n".join(lines))]
     if rep.get("executed"):
         out.append(picture(ex.screen()))
+    return out
+
+
+_cu = None
+
+
+def cu():
+    """The native computer-tool executor, sharing the KVM with the Executor (begin's run folder for its frames)."""
+    global _cu
+    ex = executor()
+    if _cu is None:
+        _cu = CU(ex.kvm, "", "", None, ex.os_name, save_dir=None, log=lambda *a: None, gate=ex.vlm)
+    _cu.save_dir, _cu.task = ex.save_dir, ex.task
+    return _cu
+
+
+@mcp.tool(description="Native computer use, the standard `computer` tool: one action on the computer (left_click, "
+          "double_click, right_click, mouse_move, left_click_drag, type, key, scroll, wait, zoom, screenshot), then the "
+          "screenshot after it. `coordinate` is [x, y] in pixels of the last screenshot; `text` is the text to type or "
+          "the key combo (cmd+l, Return, ctrl+shift+t); scroll takes scroll_direction + scroll_amount (ticks, ~13 per "
+          "screenful); zoom takes region [x0, y0, x1, y1]; wait takes duration (seconds). Prefer it over act when you "
+          "know the exact pixel; use look/survey for a fresh view.")
+def computer(action: str, coordinate: list[int] | None = None, text: str | None = None, scroll_direction: str | None = None,
+             scroll_amount: int | None = None, duration: float | None = None, region: list[int] | None = None,
+             start_coordinate: list[int] | None = None) -> list:
+    c = cu()
+    if c.size is None:
+        c.screen(fresh=True)
+    inp = {k: v for k, v in {"action": action, "coordinate": coordinate, "text": text, "scroll_direction": scroll_direction,
+                             "scroll_amount": scroll_amount, "duration": duration, "region": region,
+                             "start_coordinate": start_coordinate}.items() if v is not None}
+    try:
+        note, image = c.do(inp)
+    except Exception as e:
+        record({"computer": inp, "error": str(e)})
+        return [TextContent(type="text", text=f"error: {e}"), picture(c.screen(fresh=True))]
+    if image is None:
+        from .run import latest
+        c.frame = latest(c.kvm, timeout=2.0, interval=0.0, tolerance=2.0, first_delay=0.25)
+        img = c.screen()
+    else:
+        img = None
+    ex = executor()
+    ex.n += 1
+    if img is not None:
+        ex.save(img, f"step{ex.n:02d}.jpg")
+    record({"computer": inp, "note": note})
+    out = [TextContent(type="text", text=note or "ok")]
+    out.append(picture(img) if img is not None else ImageContent(type="image", data=image["source"]["data"], mimeType="image/jpeg"))
     return out
 
 

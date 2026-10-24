@@ -6,8 +6,10 @@ the task is done. The KVM is the executor.
 
     python3 -m agent.cu "In the Helium web browser, go to connectionsunlimited.org, click New Game and solve it"
 
-Kept from the KVM side: off-screen clicks are refused with an error result, the last few screenshots only stay
-in context (token cost), frames and a step log are saved.
+Kept from the KVM side: off-screen clicks are refused with an error result; an Enter right after typed text is
+gated (a local model checks the text landed in an input that fits the task, so a chat box or terminal that
+happened to have focus never gets it sent); the last few screenshots only stay in context; frames and a step
+log are saved.
 """
 import argparse
 import base64
@@ -19,8 +21,8 @@ import time
 import urllib.request
 
 from .kvm import KVM, PLACEHOLDER_SIZE, content_rect
-from .run import latest
-from .vlm import load_key
+from .run import latest, typed_where_wanted
+from .vlm import VLM, load_key
 
 SYSTEM = """You are operating a {os} computer through its keyboard and mouse. You see the screen as screenshots;
 coordinates are pixels of the screenshot you were given. After each batch of actions you get a fresh screenshot.
@@ -56,9 +58,11 @@ def combo(text):
 
 
 class Session:
-    def __init__(self, kvm, base, model, key, os_name="macOS", save_dir=None, log=print, keep_images=3, max_side=1280):
+    def __init__(self, kvm, base, model, key, os_name="macOS", save_dir=None, log=print, keep_images=3, max_side=1280,
+                 gate=None, task=""):
         self.kvm, self.base, self.model, self.key, self.os_name = kvm, base.rstrip("/"), model, key, os_name
         self.save_dir, self.log, self.keep_images, self.max_side = save_dir, log, keep_images, max_side
+        self.gate, self.task, self.typed = gate, task, None   # gate: VLM judging where typed text landed before Enter
         self.frame = None        # the frame the last batch settled on
         self.size = None         # size of the screenshot the model sees (pixels its coordinates refer to)
         self.n_shots = 0
@@ -112,14 +116,27 @@ class Session:
                 count = {"double_click": 2, "triple_click": 3}.get(a, 1)
                 acts.append({"type": "click", "button": btn, "count": count})
             self.kvm.actions(acts)
+            self.typed = None
         elif a == "left_click_drag":
             sx, sy = self.frac(inp.get("start_coordinate") or inp.get("coordinate"))
             ex, ey = self.frac(inp.get("coordinate"))
             self.kvm.actions([{"type": "drag", "x": sx, "y": sy, "to_x": ex, "to_y": ey, "button": "left"}])
         elif a == "type":
-            self.kvm.actions([{"type": "type", "text": str(inp.get("text", ""))}])
+            text = str(inp.get("text", ""))
+            enter = text.endswith("\n")
+            text = text.rstrip("\n")
+            if text:
+                self.kvm.actions([{"type": "type", "text": text}])
+                self.typed = text
+            if enter:
+                self.enter()
         elif a == "key":
-            self.kvm.actions([{"type": "key", "combo": combo(str(inp.get("text", "")))}])
+            c = combo(str(inp.get("text", "")))
+            if c.split("+")[-1] == "enter" and self.typed is not None:
+                self.enter()
+            else:
+                self.kvm.actions([{"type": "key", "combo": c}])
+                self.typed = None
         elif a == "scroll":
             fx, fy = self.frac(inp.get("coordinate") or [self.size[0] // 2, self.size[1] // 2])
             n = int(inp.get("scroll_amount") or 3)
@@ -148,6 +165,16 @@ class Session:
             raise ValueError(f"unknown action {a!r}")
         self.frame = None
         return "ok", None
+
+    def enter(self):
+        """Enter after typed text: pressed only if the text is seen in an input the task wants it in."""
+        typed, self.typed = self.typed, None
+        if self.gate and typed:
+            fits, holder = typed_where_wanted(self.kvm, self.gate, self.task, typed)
+            if not fits:
+                raise ValueError(f'Enter NOT pressed: "{typed}" landed in: {holder}, not an input that fits the task. '
+                                 "Click the right input (or use its shortcut, e.g. cmd+l / cmd+t) and type again")
+        self.kvm.actions([{"type": "key", "combo": "enter"}])
 
     # --- model ------------------------------------------------------------------------------------------------
     def chat(self, messages, max_tokens=1500):
@@ -184,6 +211,7 @@ class Session:
 
     # --- loop -------------------------------------------------------------------------------------------------
     def run(self, task, max_turns=40, settle_max=2.0):
+        self.task, self.typed = task, None
         img = self.screen(fresh=True)
         messages = [{"role": "user", "content": [{"type": "text", "text": task}, self.shot_block(img)]}]
         for turn in range(1, max_turns + 1):
@@ -226,12 +254,15 @@ def main(argv=None):
     p.add_argument("--kvm", default=os.environ.get("AIKVM_URL", "http://10.42.0.101:8080"))
     p.add_argument("--llm", default=os.environ.get("AIKVM_ANTHROPIC_BASE", "http://127.0.0.1:4001/v1"), help="Anthropic Messages-compatible base")
     p.add_argument("--model", default=os.environ.get("AIKVM_CU_MODEL", "anthropic/claude-opus-5-5"))
-    p.add_argument("--key-file", default=None)
+    p.add_argument("--key-file", default=None, help="key for --llm (the local gateway needs none)")
+    p.add_argument("--gate", default=os.environ.get("AIKVM_LLM_BASE", "http://127.0.0.1:8000/v1"), help="local model judging Enter after typed text ('' disables)")
+    p.add_argument("--gate-key-file", default="/etc/gemma4-vllm-api-key")
     p.add_argument("--os", dest="os_name", default="macOS")
     p.add_argument("--max-turns", type=int, default=40)
     p.add_argument("--save-dir", default=None)
     a = p.parse_args(argv)
-    s = Session(KVM(a.kvm), a.llm, a.model, load_key(a.key_file) if a.key_file else None, a.os_name, a.save_dir)
+    gate = VLM(a.gate, "qwen27", key=load_key(a.gate_key_file)) if a.gate else None
+    s = Session(KVM(a.kvm), a.llm, a.model, load_key(a.key_file) if a.key_file else None, a.os_name, a.save_dir, gate=gate)
     t0 = time.monotonic()
     result = s.run(a.task, a.max_turns)
     result["seconds"] = round(time.monotonic() - t0, 1)

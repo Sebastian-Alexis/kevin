@@ -44,15 +44,20 @@ shutdown). Automatic new-display trials: 5/5 and 3/3 after the last fixes.
 
 ## Using it
 
-    python3 -m agent "In the Helium web browser, open a new tab and search for raspberry pi kvm"
+    python3 -m agent "In the Helium web browser, go to connectionsunlimited.org, click New Game and solve it"
 
-One model call per step: the model sees the screen picture (pillarbox removed) and replies with batched
-actions, constrained to a JSON schema (vLLM structured outputs) so every reply parses; clicks carry a target
-description and a 0-1000 `point_2d`. Typical step: 1.3-2 s of model time plus execution. After acting, the
-next screenshot is taken once the screen stops changing (page loads get the time they need, at most
-`--settle-max`). `--dry-run` asks the model without sending input; `--save-dir` keeps every frame.
+This is native computer use: the model (Claude via the omp gateway, `--model`) drives the computer through the
+standard `computer` tool it was trained on (`left_click`, `type`, `key`, `scroll`, `zoom`, `screenshot`, ...), the
+way its own computer-use agent works (`agent/cu.py`). It sees a screenshot, calls the tool as often as it likes
+(several calls per turn when it is confident: four tiles and Submit in one go), gets a screenshot back once the
+screen has settled, and stops when the task is done. No planner prompt of ours, no action grammar, no grounder.
+Measured on the Mac: a Connections puzzle in 17 turns / 88 s, "what is on my calendar today" in 4 turns / 14 s.
 
-Keystrokes are what can do damage on someone's computer, so:
+The grounded planner loop is still there as `python3 -m agent.run` (`plan` + steps with `expect`, Holo4 grounding
+of described targets, local verification of each step; the path the MCP `act` tool uses). It takes 2-4 s of model
+time per step and is the better fit for models that are weak at pixel coordinates.
+
+Keystrokes are what can do damage on someone's computer, so (both loops):
 
 - If the task names an app, it is brought to the front before the first look, through the OS launcher
   (Spotlight, or Raycast/Alfred when they own cmd+space; the Start/Activities search elsewhere). Nothing is
@@ -78,12 +83,13 @@ The Pi's own API (`pi/api/server.py`) is usable directly: `GET /health`, `GET /s
 ## The KVM as an MCP server, Droid as the planner
 
 The computer under control is also exposed as an MCP server running **on the KVM** (`agent/kvm_mcp.py`,
-`ai-kvm-mcp.service`, streamable HTTP on `:8090/mcp`). Any MCP client gets four tools and nothing else:
+`ai-kvm-mcp.service`, streamable HTTP on `:8090/mcp`). Any MCP client gets these tools and nothing else:
 
 | tool | what it does |
 | --- | --- |
 | `begin(task)` | starts a run: resets focus tracking, opens a run folder (`/var/lib/ai-kvm/runs/<id>/` with every frame and `events.jsonl`), returns the screenshot |
 | `look()` | fresh screenshot of the target (pixels of the picture are the coordinate system) |
+| `computer(action, ...)` | the standard computer tool, one action and the settled screenshot after it (native path for Claude-family planners) |
 | `act(actions, expect)` | one batch in the action grammar (`click <target>`, `key cmd+l`, `type ...`, `scroll <target> -N`, `wait`, `open_app`), then a local model checks the screen shows `expect`; returns what ran, what was refused and why, the verdict, and the screenshot after |
 | `open_app(name)` | brings an app to the front through the OS launcher |
 
