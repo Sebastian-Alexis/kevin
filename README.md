@@ -95,8 +95,11 @@ The grounder and verifier are local models on the controller, reached from the K
 (`provisioning/host/ai-kvm-models.service` forwards them, and forwards the MCP port to Tailscale peers).
 
 **Where Droid runs.** [Factory's Droid](https://docs.factory.ai/sdk/python) is the planner: `agent/droid.py`
-opens a Droid SDK session whose only reachable surface is this MCP server (Droid's shell, file and web tools are
-disabled; the permission handler cancels anything that is not an `ai-kvm` tool call), and streams the session.
+opens a Droid SDK session whose only reachable surface is this MCP server: Droid's shell, file and web tools are
+removed from the session (`disabled_tools`, the hard gate), the permission handler approves only `ai-kvm` tool
+calls and the wrappers Droid calls them through (a global auto-approve hook on this machine pre-empts it, so it
+is a second line, not the first), and the rails on the KVM bound what any approved call can do. The session is
+streamed to the report.
 
     .venv-droid/bin/python -m agent.droid "In the Helium browser, go to example.com and report the heading"
     .venv-droid/bin/python -m agent.droid --inbox /var/lib/ai-kvm/inbox     # the trigger

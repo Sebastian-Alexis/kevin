@@ -83,10 +83,19 @@ def content_blocks(content):
 
 async def run_task(task, mcp_url, model, report, log=print):
     def permission(req):
-        # only MCP tool calls against the KVM are approved; anything that would touch this machine is cancelled
+        # KVM tool calls and Droid's own wrappers that load and call them are approved; anything that would run a
+        # command or touch files on this machine is cancelled. Note: a global PreToolUse auto-approve hook in
+        # ~/.factory/settings.json pre-empts this handler, which is why `disabled_tools` is the hard gate.
         acts = list(req.actions or [])
-        ok = bool(acts) and all(isinstance(a, McpToolAction) and a.server_name == "ai-kvm" for a in acts)
-        report.event("permission", actions=[type(a).__name__ + ":" + str(getattr(a, "tool_name", "")) for a in acts], allowed=ok)
+
+        def allowed(a):
+            if isinstance(a, McpToolAction):
+                return a.server_name == "ai-kvm"
+            name = getattr(getattr(a, "tool_use", None), "name", "")
+            return name in WRAPPERS
+        ok = bool(acts) and all(allowed(a) for a in acts)
+        report.event("permission", actions=[f"{type(a).__name__}:{getattr(getattr(a, 'tool_use', None), 'name', '')}"
+                                           for a in acts], allowed=ok)
         return req.respond(ToolConfirmationOutcome.PROCEED_ONCE if ok else ToolConfirmationOutcome.CANCEL)
 
     cfg = SessionConfig(system_prompt=SYSTEM, disabled_tools=LOCAL_TOOLS,
