@@ -7,6 +7,7 @@ PI=${1:-kvm@10.42.0.101}
 cd "$(dirname "$0")/.."
 rsync -a --delete --exclude __pycache__ agent/ "$PI:/tmp/agent/"
 rsync -a /tmp/piwheels/ "$PI:/tmp/piwheels/" 2>/dev/null || true
+cat ~/.config/omp-gateway/key | ssh "$PI" 'sudo install -d -m 755 /etc/ai-kvm && sudo tee /etc/ai-kvm/gateway-key >/dev/null && sudo chmod 600 /etc/ai-kvm/gateway-key'
 sudo -n cat /etc/gemma4-vllm-api-key | ssh "$PI" 'sudo install -d -m 755 /etc/ai-kvm && sudo tee /etc/ai-kvm/llm-key >/dev/null && sudo chmod 644 /etc/ai-kvm/llm-key'
 ssh "$PI" 'set -e
   sudo rsync -a --delete /tmp/agent/ /opt/ai-kvm/agent/

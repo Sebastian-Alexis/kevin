@@ -87,7 +87,8 @@ The computer under control is also exposed as an MCP server running **on the KVM
 
 | tool | what it does |
 | --- | --- |
-| `begin(task)` | starts a run: run folder (`/var/lib/ai-kvm/runs/<id>/` with every frame and `events.jsonl`), the rules of the computer, the screenshot, and the overview of every open window (which apps the user already uses) |
+| `run(task)` | the whole task, done by the KVM's own native loop (Sonnet over the gateway, 2-3 s per step) with every step streamed back as progress; returns the answer, the step log and the final screenshot. One tool call per task: a Factory/Droid session gets direct-loop speed (HN top-3: 9.5 s end to end over MCP) |
+| `begin(task)` | manual mode: starts a run: run folder (`/var/lib/ai-kvm/runs/<id>/` with every frame and `events.jsonl`), the rules of the computer, the screenshot, and the overview of every open window (which apps the user already uses) |
 | `computer(action, ...)` | the standard computer tool: one action (`left_click`, `type`, `key`, `scroll`, `zoom`, `screenshot`, ...), then the screenshot once the screen has settled |
 
 So a Droid session drives the computer exactly like `python3 -m agent` does (same tool, same rules, same Enter
@@ -126,10 +127,10 @@ A cron, an HTTP hook or another agent only needs to write a file. One-off runs w
 Droid's models come through BYOK (`~/.factory/settings.json` custom models pointing at `agent/omp_gateway.py`,
 the local Anthropic/OpenAI-compatible front for the models omp is logged into), so a run costs no Factory credits.
 The same server is registered in the Factory desktop app on the Mac as connector `ai-kvm` (added by this agent
-driving the app over the KVM). A plain app session carries Factory's full toolset (19 tools, 38 KB of schemas on
-every model call, measured through the gateway trace), which is what makes it slow; `droids/computer.md` is a
-custom droid whose only surface is the `ai-kvm` connector (`tools: []`, `mcpServers: ["ai-kvm"]`): install it
-as `~/.factory/droids/computer.md` on the Mac and pick it in the app.
+driving the app over the KVM). A plain app session carries Factory's full toolset (7-19 tools, 35 KB of schemas on
+every model call, measured through the gateway trace) and spends ~6 model turns driving `computer` step by step,
+which is what made it slow; custom droids cannot see MCP connectors (tested: `tools: []` and `tools: mcp`), so
+the fix is `run(task)`: the app spends one turn, the KVM runs the loop.
 
 Deploy to the KVM: `bash agent/deploy-mcp.sh` (rsyncs the `agent` package, builds the venv from offline wheels,
 installs the key and the unit).

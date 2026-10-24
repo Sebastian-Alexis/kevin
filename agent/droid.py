@@ -25,7 +25,9 @@ from droid_sdk import (AssistantMessage, HttpMcpServerConfig, InteractionHandler
                        ToolCall, ToolConfirmationOutcome, ToolResult)
 from droid_sdk.permissions import ApplyPatchAction, CreateFile, EditAction, ExecuteAction, McpToolAction
 
-SYSTEM = ("You operate a computer through the ai-kvm tools only: call begin(task) first, then drive it with computer "
+SYSTEM = ("You operate a computer through the ai-kvm tools only. For a task, call run(task) once: the KVM does it "
+          "and returns the answer, the steps and the final screenshot; relay the answer. Only if run reports it could "
+          "not finish, take over manually: call begin(task) first, then drive it with computer "
           "(the standard computer-use tool) exactly as you would with your own computer-use agent; the rules of the "
           "computer come back from begin. Never use shell, file or web tools for the task. When the task is complete, "
           "or impossible, say so in one short paragraph.")

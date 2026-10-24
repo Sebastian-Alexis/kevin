@@ -8,6 +8,7 @@ machine needs nothing but an MCP client; the Enter gate's judge is a local model
 Tools: `begin(task)` (run folder + first screenshot + overview of open windows), `computer(action, ...)`.
 Every call is appended to the run's events.jsonl; frames are saved next to it.
 """
+import asyncio
 import base64
 import io
 import json
@@ -15,7 +16,7 @@ import os
 import threading
 import time
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ImageContent, TextContent
 
@@ -59,7 +60,7 @@ def picture(img):
     return ImageContent(type="image", data=base64.b64encode(buf.getvalue()).decode(), mimeType="image/jpeg")
 
 
-@mcp.tool(description="Start a run for `task` (call once first). Returns the run id, the rules of this computer, the "
+@mcp.tool(description="Manual mode (prefer `run`): start a run for `task`. Returns the run id, the rules of this computer, the "
           "current screenshot, then the overview of every open window (what the user already has running: use those "
           "apps for the task; launch something else only when nothing suitable is open). Coordinates for `computer` "
           "are pixels of the screenshots.")
@@ -99,7 +100,7 @@ def survey() -> list:
     return [TextContent(type="text", text="every open window, overview now closed"), picture(ov)]
 
 
-@mcp.tool(description="The standard computer tool: one action on the computer. Only screenshot and zoom return an "
+@mcp.tool(description="Manual mode (prefer `run`): the standard computer tool, one action on the computer. Only screenshot and zoom return an "
           "image: batch your actions and end the batch with a screenshot (the screen is allowed to settle first). action: left_click, double_click, triple_click, right_click, middle_click, "
           "mouse_move, left_click_drag (start_coordinate -> coordinate), type (text; a trailing newline presses "
           "Enter), key (text = combo: cmd+l, Return, ctrl+shift+t, Escape), scroll (coordinate + scroll_direction + "
@@ -129,6 +130,42 @@ def computer(action: str, coordinate: list[int] | None = None, text: str | None 
     else:
         c.frame = None   # the next screenshot captures fresh (and settles) rather than reusing a pre-action frame
     return out
+
+
+PLANNER_BASE = os.environ.get("AIKVM_PLANNER_BASE", "http://10.42.0.1:4001/v1")
+PLANNER_MODEL = os.environ.get("AIKVM_PLANNER_MODEL", "anthropic/claude-sonnet-5-5")
+
+
+@mcp.tool(description="Do a whole task on the computer autonomously and return the result: the KVM runs its own "
+          "native computer-use loop (screenshot -> batch of actions -> screenshot, Sonnet, ~2-3 s per step) and "
+          "streams every step back as progress. Use this for any task; use begin/computer only when you need to "
+          "control individual actions yourself. Returns the final answer, the step log, and the final screenshot.")
+async def run(task: str, ctx: Context, max_turns: int = 30) -> list:
+    c = cu()
+    run_id = time.strftime("%Y%m%d-%H%M%S")
+    c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
+    os.makedirs(c.save_dir, exist_ok=True)
+    c.base, c.model, c.memory, c.computer = PLANNER_BASE, PLANNER_MODEL, MEMORY, COMPUTER
+    c.key = load_key(os.environ.get("AIKVM_PLANNER_KEY_FILE", "/etc/ai-kvm/gateway-key"))
+    steps = []
+    loop = asyncio.get_running_loop()
+
+    def log(msg):
+        steps.append(msg)
+        asyncio.run_coroutine_threadsafe(ctx.info(msg[:400]), loop)
+    c.log = log
+    t0 = time.monotonic()
+    record({"run": len(task)})
+    try:
+        result = await asyncio.to_thread(c.run, task, max_turns)
+    except Exception as e:
+        result = {"done": False, "fail": f"{type(e).__name__}: {e}", "turns": len(steps)}
+    finally:
+        c.log = lambda *a: None
+    threading.Thread(target=c.remember, daemon=True).start()
+    text = (f"{'done' if result.get('done') else 'not done: ' + str(result.get('fail'))} in {result.get('turns')} turns, "
+            f"{time.monotonic() - t0:.0f} s\n\n{result.get('text', '')}\n\nsteps:\n" + "\n".join(s[:300] for s in steps))
+    return [TextContent(type="text", text=text), picture(c.screen(fresh=True))]
 
 
 @mcp.tool(description="End the run: outcome is 'success' or 'failure', summary one short paragraph of what was done "
