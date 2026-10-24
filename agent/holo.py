@@ -88,7 +88,7 @@ def to_actions(name, args, os_name):
 
 
 def run(task, kvm, url, key, model, rails_vlm, os_name="macOS", max_steps=30, think=False, dry_run=False, save_dir=None,
-        app=None, log=print):
+        app=None, restore=False, log=print):
     msgs = [{"role": "system", "content": "You are a computer-use agent operating a computer through the available "
                                           "tools. Complete the user's task step by step, then call answer."},
             {"role": "user", "content": task}]
@@ -164,7 +164,7 @@ def run(task, kvm, url, key, model, rails_vlm, os_name="macOS", max_steps=30, th
                 f"act+settle {time.monotonic() - t1:.2f}s | {summary}{' | NO CHANGE' if result != 'ok' else ''}")
         return {"done": False, "fail": "max steps reached", "steps": max_steps}
     finally:
-        if hidden:
+        if hidden and restore:
             try:
                 log(f"show all: {show_all(kvm, rails_vlm) or show_all(kvm, rails_vlm)}")
             except Exception as e:
@@ -187,13 +187,14 @@ def main(argv=None):
     p.add_argument("--app")
     p.add_argument("--save-dir")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--show-all", action="store_true")
     a = p.parse_args(argv)
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
     key = load_key(a.key_file)
     rails = VLM(a.rails_llm, a.rails_model, key=key)
     result = run(a.task, KVM(a.kvm), a.llm.rstrip("/") + "/chat/completions", key, a.model, rails, a.os_name, a.max_steps,
-                 a.think, a.dry_run, a.save_dir, a.app)
+                 a.think, a.dry_run, a.save_dir, a.app, a.show_all)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 
