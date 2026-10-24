@@ -90,7 +90,7 @@ def make_handler(gw, key=None):
             if key is None or self.client_address[0].startswith("127."):
                 return True
             got = self.headers.get("x-api-key") or self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-            if got == key:
+            if got and got in key:   # key: the set of accepted keys (one per client, each revocable on its own)
                 return True
             self.send_error(401, "invalid API key")
             return False
@@ -135,9 +135,11 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--bind", action="append", default=None, metavar="HOST:PORT",
                    help="listen here (repeatable; default 127.0.0.1:4001)")
-    p.add_argument("--key-file", default=None, help="require this API key from clients (needed on any non-loopback bind)")
+    p.add_argument("--key-file", default=None, help="file of accepted client keys, one per line (needed on any non-loopback bind)")
     a = p.parse_args(argv)
-    key = open(a.key_file).read().strip() if a.key_file else None
+    key = None
+    if a.key_file:   # a file with one key per line (blank lines and # comments ignored); each client gets its own line
+        key = {l.strip() for l in open(a.key_file) if l.strip() and not l.startswith("#")}
     binds = a.bind or ["127.0.0.1:4001"]
     if key is None and any(not b.startswith("127.") for b in binds):
         p.error("a non-loopback bind needs --key-file")
