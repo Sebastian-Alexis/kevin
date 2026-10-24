@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 520" font-family="Inter, Helvetica, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--muted,#6b7280)"/></marker>
+  </defs>
+  <style>
+    .box{fill:var(--surface,#f6f8fa);stroke:var(--border,#d0d7de);stroke-width:1.2;rx:8}
+    .t{fill:var(--fg,#1f2328)} .m{fill:var(--muted,#6b7280);font-size:11.5px} .h{fill:var(--fg,#1f2328);font-weight:600;font-size:14px}
+    .edge{stroke:var(--muted,#6b7280);stroke-width:1.4;fill:none;marker-end:url(#a)}
+    .lbl{fill:var(--muted,#6b7280);font-size:11px}
+    .acc{stroke:var(--accent,#0969da)} .c1{fill:var(--c1,#0969da)} .c2{fill:var(--c2,#8250df)} .c3{fill:var(--c3,#1a7f37)}
+  </style>
+
+  <!-- target computer -->
+  <rect class="box" x="20" y="150" width="200" height="220"/>
+  <text class="h" x="120" y="178" text-anchor="middle">Target computer</text>
+  <text class="m" x="120" y="196" text-anchor="middle">any Mac / PC, nothing installed</text>
+  <rect class="box" x="38" y="212" width="164" height="40"/><text class="t" x="120" y="236" text-anchor="middle">HDMI out</text>
+  <rect class="box" x="38" y="262" width="164" height="40"/><text class="t" x="120" y="286" text-anchor="middle">USB-C (power + HID)</text>
+  <rect class="box" x="38" y="312" width="164" height="40"/><text class="t" x="120" y="336" text-anchor="middle">apps already open</text>
+
+  <!-- KVM -->
+  <rect class="box acc" x="300" y="90" width="260" height="340" stroke-width="2"/>
+  <text class="h" x="430" y="118" text-anchor="middle">ai-kvm (Raspberry Pi)</text>
+  <text class="m" x="430" y="136" text-anchor="middle">powered by the target, joins the dev AP</text>
+  <rect class="box" x="318" y="152" width="224" height="40"/><text class="t" x="430" y="170" text-anchor="middle">tc358743 CSI capture</text><text class="m" x="430" y="184" text-anchor="middle">720p MJPEG, ~14 fps, pillarbox cropped</text>
+  <rect class="box" x="318" y="200" width="224" height="40"/><text class="t" x="430" y="218" text-anchor="middle">USB HID gadget</text><text class="m" x="430" y="232" text-anchor="middle">keyboard + absolute mouse (configfs)</text>
+  <rect class="box" x="318" y="248" width="224" height="40"/><text class="t" x="430" y="266" text-anchor="middle">control API :8080</text><text class="m" x="430" y="280" text-anchor="middle">/screenshot, /actions, /health</text>
+  <rect class="box" x="318" y="296" width="224" height="118" style="stroke:var(--accent,#0969da)"/>
+  <text class="h" x="430" y="318" text-anchor="middle">MCP server :8090</text>
+  <text class="t" x="430" y="338" text-anchor="middle">begin · look · act · survey · open_app</text>
+  <text class="m" x="430" y="356" text-anchor="middle">Executor rails: grounding, off-screen +</text>
+  <text class="m" x="430" y="370" text-anchor="middle">focus checks, Enter gate, settle,</text>
+  <text class="m" x="430" y="384" text-anchor="middle">expect verification, run log + frames</text>
+  <text class="m" x="430" y="402" text-anchor="middle">stateless HTTP · any MCP client</text>
+
+  <!-- controller -->
+  <rect class="box" x="640" y="250" width="320" height="180"/>
+  <text class="h" x="800" y="278" text-anchor="middle">Controller (GPU box)</text>
+  <text class="m" x="800" y="296" text-anchor="middle">local models only · forwards on the AP + Tailscale</text>
+  <rect class="box" x="658" y="312" width="140" height="48"/><text class="t" x="728" y="332" text-anchor="middle">Holo4-35B-A3B</text><text class="m" x="728" y="348" text-anchor="middle">grounder :8010 · ~1.3 s/batch</text>
+  <rect class="box" x="806" y="312" width="136" height="48"/><text class="t" x="874" y="332" text-anchor="middle">Qwen3.8-27B</text><text class="m" x="874" y="348" text-anchor="middle">verifier + rails :8000</text>
+  <rect class="box" x="658" y="368" width="284" height="48"/><text class="t" x="800" y="388" text-anchor="middle">omp gateway :4001</text><text class="m" x="800" y="404" text-anchor="middle">Anthropic / OpenAI-compatible front for cloud models (BYOK)</text>
+
+  <!-- planners -->
+  <rect class="box" x="640" y="40" width="320" height="170"/>
+  <text class="h" x="800" y="68" text-anchor="middle">Planners (any MCP client)</text>
+  <rect class="box" x="658" y="86" width="284" height="34"/><text class="t" x="800" y="108" text-anchor="middle">Droid SDK runner · inbox trigger · report.md</text>
+  <rect class="box" x="658" y="128" width="284" height="34"/><text class="t" x="800" y="150" text-anchor="middle">Factory desktop app · connector "ai-kvm"</text>
+  <rect class="box" x="658" y="170" width="284" height="30"/><text class="m" x="800" y="190" text-anchor="middle">in-house loop (agent/run.py) · same rails, no MCP</text>
+
+  <!-- edges -->
+  <path class="edge" d="M220,232 L318,172"/><text class="lbl" x="250" y="196">HDMI</text>
+  <path class="edge" d="M318,220 L220,282"/><text class="lbl" x="240" y="262">USB HID</text>
+  <path class="edge" d="M560,350 L658,340"/><text class="lbl" x="572" y="332">ground / verify</text>
+  <path class="edge" d="M640,125 L560,320"/><text class="lbl" x="548" y="212">MCP (http)</text>
+  <path class="edge" d="M800,210 L800,250"/><text class="lbl" x="808" y="236">models</text>
+</svg>

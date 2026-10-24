@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 120" font-family="Inter, Helvetica, Arial, sans-serif">
+  <style>.n{fill:var(--accent,#0969da);font-size:30px;font-weight:700}.l{fill:var(--muted,#6b7280);font-size:12.5px}.b{fill:none;stroke:var(--border,#d0d7de)}</style>
+  <g text-anchor="middle">
+    <text class="n" x="98" y="56">5</text><text class="l" x="98" y="82">MCP tools, the whole</text><text class="l" x="98" y="98">surface a planner gets</text>
+    <line class="b" x1="196" y1="20" x2="196" y2="100"/>
+    <text class="n" x="294" y="56">~3 s</text><text class="l" x="294" y="82">planner time per step</text><text class="l" x="294" y="98">(Sonnet 5.5 / Opus 5.5)</text>
+    <line class="b" x1="392" y1="20" x2="392" y2="100"/>
+    <text class="n" x="490" y="56">1 → 3</text><text class="l" x="490" y="82">screenshot → verified steps</text><text class="l" x="490" y="98">(Opus, Connections board)</text>
+    <line class="b" x1="588" y1="20" x2="588" y2="100"/>
+    <text class="n" x="686" y="56">1.3 s</text><text class="l" x="686" y="82">to ground a whole batch</text><text class="l" x="686" y="98">of targets (Holo4, parallel)</text>
+    <line class="b" x1="784" y1="20" x2="784" y2="100"/>
+    <text class="n" x="882" y="56">0</text><text class="l" x="882" y="82">software on the target;</text><text class="l" x="882" y="98">0 Factory credits (BYOK)</text>
+  </g>
+</svg>
