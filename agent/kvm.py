@@ -36,6 +36,12 @@ class KVM:
             return json.load(r)
 
 
+def frame(kvm):
+    """The current picture, or None while ustreamer shows its NO SIGNAL placeholder (nothing to see or ground)."""
+    img = kvm.screenshot()
+    return None if img.size == PLACEHOLDER_SIZE else img
+
+
 def mean_diff(a, b):
     """Mean absolute difference of two same-size frames on a 0-255 scale (a static screen's JPEG noise is ~1)."""
     return ImageStat.Stat(ImageChops.difference(a, b).convert("L")).mean[0]
@@ -48,8 +54,7 @@ def settled(kvm, timeout=6.0, interval=0.4, tolerance=2.0, first_delay=0.0):
     prev = None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        img = kvm.screenshot()
-        img = None if img.size == PLACEHOLDER_SIZE else img
+        img = frame(kvm)
         if img is not None and prev is not None and img.size == prev.size and mean_diff(img, prev) < tolerance:
             return img
         prev = img

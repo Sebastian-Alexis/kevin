@@ -16,7 +16,7 @@ import time
 
 from PIL import ImageChops, ImageStat
 
-from .kvm import KVM, content_rect, mean_diff, settled, to_hid
+from .kvm import KVM, PLACEHOLDER_SIZE, content_rect, mean_diff, settled, to_hid
 from .vlm import VLM, load_key
 
 SYSTEM = "You are the vision model of an agent that controls a computer through its USB keyboard and mouse."
@@ -38,7 +38,7 @@ Actions (point_2d = [x, y] center of the element, normalized 0-1000; target = sh
  {"wait": ms}
  {"open_app": "Safari"} brings that app to the front, starting it if needed; ends the turn
 Rules:
-- Keystrokes go to the focused window. Right after open_app the app has keyboard focus, so its shortcuts work directly (e.g. cmd+t, cmd+l). Otherwise, before any "type" or "key", click the exact field or window you mean in the same turn.
+- Keystrokes go to the focused window. Right after open_app the app's shortcuts work directly (e.g. cmd+t, cmd+l), but text needs an input with focus first (that shortcut or a click on it). Otherwise, before any "type" or "key", click the exact field or window you mean in the same turn.
 - Windows overlap and look alike: whenever you are not sure the task's app is the frontmost window, open_app it.
 - Do every step the task names, in order; never skip one (e.g. open the new tab it asks for before searching).
 - Never type into terminals, chats or apps the task does not name.
@@ -78,32 +78,12 @@ TURN_SCHEMA = {
 
 
 def parse(text):
-    """The JSON object in a model reply: the whole reply (schema-constrained), else the first balanced object
-    (free-form replies may wrap it in ```json fences). Braces inside strings don't count."""
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except json.JSONDecodeError:
-        pass
+    """The first JSON object in a model reply: schema-constrained replies are exactly one, free-form ones may wrap
+    it in ```json fences. raw_decode stops at the object's end and treats braces inside strings as text."""
     start = text.find("{")
     if start < 0:
         raise ValueError(f"no JSON object in reply: {text[:200]!r}")
-    depth, in_str, escaped = 0, False, False
-    for i in range(start, len(text)):
-        c = text[i]
-        if escaped:
-            escaped = False
-        elif in_str:
-            escaped = c == "\\"
-            in_str = c != '"'
-        elif c == '"':
-            in_str = True
-        elif c in "{}":
-            depth += 1 if c == "{" else -1
-            if depth == 0:
-                return json.loads(text[start:i + 1])
-    raise ValueError(f"unterminated JSON in reply: {text[:200]!r}")
+    return json.JSONDecoder().raw_decode(text, start)[0]
 
 
 def point(text):
@@ -129,13 +109,24 @@ def split_actions(actions):
     return out
 
 
-def unfocused_keys(actions):
-    """True if a keyboard action comes before any click or open_app in the batch (it would hit whatever has focus)."""
+# Keys that put keyboard focus into an input (new tab/window, location, find, quick switcher).
+FOCUS_KEYS = {f"{m}+{k}" for m in ("cmd", "ctrl") for k in "tlnfk"}
+
+
+def unfocused_keys(actions, focused=False, primed=False):
+    """True if keystrokes would go to whatever happens to have focus. Keys need a click (or open_app) before them in
+    the batch unless the app open_app raised still has focus. Typed text needs a click or a focus key (FOCUS_KEYS)
+    before it, in this batch or ending the previous one (primed): letters typed into a page fire its one-key
+    shortcuts."""
     for a in actions:
         if "open_app" in a or any(k in a for k in CLICKS):
             return False
-        if "type" in a or "key" in a:
+        if "type" in a and not primed:
             return True
+        if "key" in a:
+            if not (focused or primed):
+                return True
+            primed = str(a["key"]).lower().replace(" ", "") in FOCUS_KEYS
     return False
 
 
@@ -203,13 +194,26 @@ def segments(actions):
     return out, 0
 
 
+GATE_SCHEMA = {"type": "object", "properties": {"input": {"type": "string"}, "fits": {"type": "boolean"}},
+               "required": ["input", "fits"], "additionalProperties": False}
+
+
 def typed_where_wanted(kvm, vlm, task, text):
-    """Is the text just typed shown in the input the task wants it in? Asked on the whole screen at full size: at
-    960 px the model took text that went nowhere for text in place."""
+    """Where did the text just typed land, and is that where the task wants it? Returns (fits, kind of input). The
+    model names the input before judging it, on the whole screen at full size (at 960 px it took text that went
+    nowhere for text in place). An unreadable answer counts as not fitting: Enter is not pressed."""
     frame = latest(kvm, timeout=1.0, interval=0.1, tolerance=1.5, first_delay=0.1)
-    return yes(vlm, frame.crop(content_rect(frame)), (
-        f'Task: "{task}". The agent just typed "{text}" and will press Enter next. Is that text shown in the input '
-        'where this task wants it typed? A chat box, terminal or document the task does not mention means no.'))
+    reply, _, _ = vlm.chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": [
+        vlm.image_part(frame.crop(content_rect(frame))), {"type": "text", "text": (
+            f'Task: "{task}". The agent just typed "{text}" and will press Enter next, which submits it wherever it '
+            'is. Find that text on the screen. Reply JSON: {"input": "<the kind of input holding the text, e.g. '
+            'browser address bar, web search box, chat message box, terminal, document>", "fits": <true only if the '
+            'task asks for the text to go into exactly that kind of input>}')}]}], 80, GATE_SCHEMA)
+    try:
+        answer = parse(reply)
+    except ValueError:
+        return False, "unknown (unreadable check)"
+    return answer.get("fits") is True, str(answer.get("input", ""))[:60]
 
 
 def yes(vlm, img, question):
@@ -218,6 +222,30 @@ def yes(vlm, img, question):
                            {"role": "user", "content": [vlm.image_part(img),
                                                         {"type": "text", "text": question + " Answer only yes or no."}]}], 4)
     return text.strip().lower().startswith("yes")
+
+
+MENU_BAR_LEFT = (0, 0, 0.32, 0.06)   # the Apple logo and the bold name of the active app
+
+
+def reveal_menu_bar(kvm):
+    """Touch the top edge (and wiggle) so an auto-hidden menu bar slides in."""
+    kvm.actions([{"type": "move", "x": 0.5, "y": 0.02}, {"type": "wait", "ms": 40},
+                 {"type": "move", "x": 0.5, "y": 0.0}, {"type": "wait", "ms": 40},
+                 {"type": "move", "x": 0.52, "y": 0.0}, {"type": "wait", "ms": 450}])
+
+
+def ask_yes(kvm, vlm, question, box=None, scale=2):
+    """Yes/no question about the screen. box=(x0, y0, x1, y1) as fractions crops (and upscales) the region that
+    holds the answer: a menu-bar strip is ~130 image tokens and answers in ~0.4 s instead of ~0.9 s."""
+    img = kvm.screenshot()
+    if img.size == PLACEHOLDER_SIZE:
+        return False
+    img = img.crop(content_rect(img))
+    if box:
+        w, h = img.size
+        img = img.crop((int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h)))
+        img = img.resize((img.width * scale, img.height * scale))
+    return yes(vlm, img, question)
 
 
 def latest(kvm, **kw):
@@ -278,8 +306,9 @@ def open_app(kvm, vlm, name, os_name="macOS"):
     """Bring an app to the front, starting it if needed, through the OS launcher: cmd+space on macOS (Spotlight, or
     Raycast/Alfred when they own it), the bare Windows/Super key elsewhere. Nothing is typed until a launcher is
     seen open (only what changed is asked about), and Enter is pressed only when its top result is that app.
-    On macOS every other app is then hidden (Hide Others), so stray clicks and keys cannot reach them; show_all()
-    brings them back. Returns (opened, note for the model, latest frame)."""
+    On macOS the menu bar must then name the app as the active one (a cold start leaves the previous app active for
+    seconds) before every other app is hidden (Hide Others), so stray clicks and keys cannot reach them; show_all()
+    brings them back. Returns (focused: the app is verified active, note for the model, latest frame)."""
     mac = os_name.lower().startswith("mac")
     fast = {"interval": 0.1, "tolerance": 1.5}
     before = kvm.screenshot()
@@ -292,58 +321,74 @@ def open_app(kvm, vlm, name, os_name="macOS"):
     opened = latest(kvm, timeout=1.5, **fast)
     box = changed_box(before, opened)
     if box is None or not yes(vlm, opened.crop(box), LAUNCHER_OPEN):
-        return False, f"open_app {name}: no app launcher opened, nothing typed", opened
+        kvm.actions([{"type": "key", "combo": "esc"}])   # close what did open, e.g. a launcher judged mid-animation
+        return False, f"open_app {name}: no app launcher opened, nothing typed", latest(kvm, timeout=1.0, **fast)
     kvm.actions([{"type": "type", "text": name}])
     await_change(kvm, opened, box, timeout=1.0)
     listed = latest(kvm, timeout=1.5, **fast)
     box = changed_box(before, listed) or box
-    if yes(vlm, listed.crop(box), f'Is the first (selected) result in this launcher the application named "{name}"?'):
-        kvm.actions([{"type": "key", "combo": "enter"}])
-        await_change(kvm, listed, box, timeout=1.0)
-        frame = latest(kvm, timeout=3.0, **fast)
-        if not mac:
-            return True, f"open_app {name}: done, {name} is now the frontmost app with keyboard focus", frame
-        kvm.actions([{"type": "key", "combo": "alt+cmd+h"}])
-        return True, (f"open_app {name}: done, {name} is now the frontmost app with keyboard focus; other apps are "
-                      "hidden"), latest(kvm, timeout=1.5, first_delay=0.15, **fast)
-    cur = listed
-    for _ in range(2):   # Raycast/Alfred close on the first Esc; Spotlight's first Esc only clears the field
-        kvm.actions([{"type": "key", "combo": "esc"}])
-        await_change(kvm, cur, box, timeout=0.6)
-        cur = latest(kvm, timeout=1.0, **fast)
-        if cur.size == before.size and mean_diff(cur.crop(box), before.crop(box)) < 4:
-            break
-    return False, f'open_app {name}: the launcher has no app named "{name}"', cur
+    if not yes(vlm, listed.crop(box), f'Is the first (selected) result in this launcher the application named "{name}"?'):
+        cur = listed
+        for _ in range(2):   # Raycast/Alfred close on the first Esc; Spotlight's first Esc only clears the field
+            kvm.actions([{"type": "key", "combo": "esc"}])
+            await_change(kvm, cur, box, timeout=0.6)
+            cur = latest(kvm, timeout=1.0, **fast)
+            if cur.size == before.size and mean_diff(cur.crop(box), before.crop(box)) < 4:
+                break
+        return False, f'open_app {name}: the launcher has no app named "{name}"', cur
+    kvm.actions([{"type": "key", "combo": "enter"}])
+    if not mac:   # no menu bar to confirm it with: keys keep needing a click on their target
+        return False, f"open_app {name}: started it; click its window before typing", latest(kvm, timeout=3.0, **fast)
+    reveal_menu_bar(kvm)
+    active = f'Is "{name}" (or a short form of that name) the bold active-app name right of the Apple logo?'
+    deadline = time.monotonic() + 8
+    while not ask_yes(kvm, vlm, active, MENU_BAR_LEFT):
+        if time.monotonic() > deadline:
+            return False, (f"open_app {name}: started it, but the menu bar never showed it as the active app; "
+                           "other apps left visible"), kvm.screenshot()
+        time.sleep(0.3)
+    kvm.actions([{"type": "key", "combo": "alt+cmd+h"}])
+    return True, (f"open_app {name}: done, the menu bar shows {name} as the active app; other apps are hidden. No "
+                  "text field has focus yet: begin the batch with the app's shortcut for the input (e.g. cmd+t, "
+                  "cmd+l) or a click on it, then type in the same batch"), latest(kvm, timeout=1.5,
+                                                                                 first_delay=0.15, **fast)
 
 
 def show_all(kvm, vlm):
-    """Bring back the apps open_app hid: the frontmost app's "Show All" menu item, run through Help > Search
-    (cmd+?) without touching the mouse (in the app menu, "Show All" sits just above "Quit"). Return is only
-    pressed once the "Show All" result row is seen selected. True if it ran."""
+    """Bring back the apps open_app hid: the active app's "Show All" menu item, run through Help > Search (cmd+?)
+    without touching the mouse (in the app menu, "Show All" sits just above "Quit"). Return is only pressed once
+    the "Show All" result row is seen selected, and the Help menu must close after it. True if it ran."""
     fast = {"interval": 0.1, "tolerance": 1.5}
     before = kvm.screenshot()
     w, h = before.size
     # The menu bar and the Help menu below it (dark on a dark page: few pixels change, see await_change)
     menus = (0, 0, w, h // 2)
 
-    def menu_area(img):   # the menu bar and its open menus, enough context for the model to judge
+    def menu_top(img):   # menu bar, Help search field and the first results: enough to judge, few image tokens
         x0, y0, x1, y1 = content_rect(img)
-        return img.crop((x0, y0, x1, y0 + int((y1 - y0) * 0.45)))
+        return img.crop((x0, y0, x1, y0 + int((y1 - y0) * 0.2)))
     kvm.actions([{"type": "key", "combo": "cmd+shift+/"}])
+    # Settles are capped where the menu renders at once: behind a page that keeps animating (streamed search
+    # answers) a full-screen settle never converges and would cost its whole timeout each time.
     await_change(kvm, before, menus, timeout=1.5)
-    opened = latest(kvm, timeout=1.5, **fast)
-    if yes(vlm, menu_area(opened), "Is a Help menu with a search field open in this image?"):
+    opened = latest(kvm, timeout=0.6, **fast)
+    if yes(vlm, menu_top(opened), "Is a Help menu with a search field open in this image?"):
         kvm.actions([{"type": "type", "text": "Show All"}])
-        await_change(kvm, opened, menus, timeout=1.5)   # Down selects nothing until the results are listed
-        listed = latest(kvm, timeout=1.5, **fast)
-        kvm.actions([{"type": "key", "combo": "down"}])
-        await_change(kvm, listed, menus, timeout=1.0)
-        chosen = latest(kvm, timeout=1.5, **fast)
-        if yes(vlm, menu_area(chosen), 'In the Help menu search results, is the "Show All" result row highlighted '
-                                       '(selected)?'):
-            kvm.actions([{"type": "key", "combo": "enter"}])
-            latest(kvm, timeout=2.0, first_delay=0.15, **fast)
-            return True
+        # The field may still hold the last search (results already listed: typing changes nothing visible) or the
+        # index may be cold (results take ~1.5 s), so judge the outcome instead of waiting for a change: press
+        # Down until "Show All" is the selected row. Three tries stay clear of "Show All Help Topics", the last row.
+        for pause in (0.3, 0.7, 1.2):
+            time.sleep(pause)
+            kvm.actions([{"type": "key", "combo": "down"}])
+            time.sleep(0.25)
+            chosen = kvm.screenshot()
+            if yes(vlm, menu_top(chosen), 'In the Help menu search results, is the "Show All" result row highlighted '
+                                          '(selected)?'):
+                kvm.actions([{"type": "key", "combo": "enter"}])
+                # a greyed-out "Show All" (nothing hidden any more) ignores Return and leaves the menu open
+                if await_change(kvm, chosen, menus, timeout=1.0) is not None:
+                    return True
+                break
     kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 150}, {"type": "key", "combo": "esc"}])
     return False
 
@@ -354,6 +399,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
     history, batches, frame = [], [], None
     mac = os_name.lower().startswith("mac")
     focused = hidden = False   # focused: the app open_app raised still has keyboard focus (no click since)
+    primed = False             # the last executed batch ended with a focus key (cmd+t, cmd+l, ...): its input has focus
     try:
         app = None if dry_run else task_app(vlm, task)
         if app:
@@ -365,6 +411,12 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
         for step in range(1, max_steps + 1):
             t0 = time.monotonic()
             frame = frame or kvm.screenshot()   # the frame the last turn's actions settled on, else a fresh one
+            deadline = time.monotonic() + 6
+            while frame.size == PLACEHOLDER_SIZE:   # NO SIGNAL: points grounded on it would click anywhere
+                if time.monotonic() > deadline:
+                    return {"done": False, "fail": "no video from the computer (NO SIGNAL)", "steps": step}
+                time.sleep(0.5)
+                frame = kvm.screenshot()
             screen = frame.crop(content_rect(frame))
             frame = None
             if save_dir:
@@ -375,7 +427,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                     or "(none yet. If the task names an app, start with open_app for it.)")
             reply, usage, t_plan = vlm.chat([{"role": "system", "content": SYSTEM},
                                              {"role": "user", "content": [image, {"type": "text", "text": PLAN % {
-                                                 "task": task, "os": os_name, "past": past}}]}], 200, TURN_SCHEMA)
+                                                 "task": task, "os": os_name, "past": past}}]}], 400, TURN_SCHEMA)
             try:
                 decision = parse(reply)
                 actions = split_actions(decision.get("actions", []))
@@ -386,9 +438,10 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                 if repeated:
                     log(f"step {step}: model {t_plan:.2f}s stopping, same batch three times -> {summary}")
                     return {"done": False, "fail": "stuck repeating the same actions", "steps": step}
-                if not focused and unfocused_keys(actions):
-                    history.append(f"saw: {observe} | REJECTED, keyboard action without first clicking its target: "
-                                   f"{summary}")
+                if unfocused_keys(actions, focused, primed):
+                    history.append(f"saw: {observe} | REJECTED, nothing was typed: no text field has focus. Begin the "
+                                   "batch with the shortcut that focuses the input (e.g. cmd+t, cmd+l) or a click on "
+                                   f"it, then type: {summary}")
                     log(f"step {step}: model {t_plan:.2f}s rejected unfocused keys -> {summary}")
                     continue
                 plan, dropped = segments(actions)
@@ -400,23 +453,27 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             notes = [f"{dropped} later action(s) skipped: open_app ends the turn"] if dropped else []
             t1 = time.monotonic()
             if not dry_run:
+                blocked = False
                 for kind, arg in plan:
                     if kind == "hid":
                         kvm.actions(arg)
                         # a click can move keyboard focus anywhere: another window, the desktop
                         focused = focused and not any(a["type"] == "click" for a in arg)
                     elif kind == "gate":
-                        if not typed_where_wanted(kvm, vlm, task, arg):
-                            notes.insert(0, f'Enter NOT pressed: "{arg}" was typed but did not show up in an input '
-                                            'that fits the task, so the keyboard focus is somewhere else. Move it '
-                                            'into the right input first (the app\'s shortcut for it, e.g. cmd+l or '
-                                            'cmd+t in a browser, or click the input), then type again')
-                            done = False
+                        fits, holder = typed_where_wanted(kvm, vlm, task, arg)
+                        if not fits:
+                            notes.insert(0, f'Enter NOT pressed: "{arg}" landed in: {holder}, not an input that fits '
+                                            'the task, so the keyboard focus is somewhere else. Move it into the right '
+                                            'input first (the app\'s shortcut for it, e.g. cmd+l or cmd+t in a '
+                                            'browser, or click the input), then type again')
+                            done, blocked = False, True
                             break
                     else:
                         focused, note, frame = open_app(kvm, vlm, arg, os_name)
                         hidden = hidden or (focused and mac)
                         notes.insert(0, note)
+                tail = plan[-1][1][-1] if plan and plan[-1][0] == "hid" and not blocked else {}
+                primed = tail.get("type") == "key" and tail["combo"].lower().replace(" ", "") in FOCUS_KEYS
                 if plan and frame is None and not done:
                     frame = latest(kvm, timeout=settle_max, interval=0.2, tolerance=1.5, first_delay=0.15)
             t_act = time.monotonic() - t1
@@ -432,7 +489,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             t0 = time.monotonic()
             try:
                 shown = show_all(kvm, vlm)
-            except (OSError, ValueError) as e:   # the task result matters more than tidying up
+            except Exception as e:   # tidying up must not replace the task result (or its exception)
                 shown = f"failed ({e})"
             log(f"show all: {shown} ({time.monotonic() - t0:.2f}s)")
 

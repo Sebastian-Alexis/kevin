@@ -19,8 +19,8 @@ import time
 
 from PIL import ImageChops, ImageStat
 
-from .kvm import KVM, PLACEHOLDER_SIZE, content_rect, settled, to_hid
-from .run import SYSTEM, point, yes
+from .kvm import KVM, content_rect, frame, settled, to_hid
+from .run import MENU_BAR_LEFT, SYSTEM, ask_yes, point, reveal_menu_bar
 from .vlm import VLM, load_key
 
 GROUND = ('Locate %s. If it is not visible in this screenshot, reply exactly {"point_2d": null}. '
@@ -40,11 +40,6 @@ def awaiting_choice(img):
     w, h = gray.size
     x0, y0, x1, y1 = bright
     return x0 > 0.25 * w and x1 < 0.75 * w and y0 > 0.3 * h and y1 < 0.7 * h
-
-
-def frame(kvm):
-    img = kvm.screenshot()
-    return None if img.size == PLACEHOLDER_SIZE else img
 
 
 def wait_for(cond, timeout, interval=0.25):
@@ -117,30 +112,7 @@ def find(kvm, vlm, target, check, log, timeout=6.0, retry=None):
         time.sleep(0.4)
 
 
-def reveal_menu_bar(kvm):
-    """Touch the top edge (and wiggle) so an auto-hidden menu bar slides in."""
-    kvm.actions([{"type": "move", "x": 0.5, "y": 0.02}, {"type": "wait", "ms": 40},
-                 {"type": "move", "x": 0.5, "y": 0.0}, {"type": "wait", "ms": 40},
-                 {"type": "move", "x": 0.52, "y": 0.0}, {"type": "wait", "ms": 450}])
-
-
-def ask_yes(kvm, vlm, question, box=None, scale=2):
-    """Yes/no question about the screen. box=(x0, y0, x1, y1) as fractions crops (and upscales) the region that
-    holds the answer: a menu-bar strip is ~130 image tokens and answers in ~0.4 s instead of ~0.9 s."""
-    img = frame(kvm)
-    if img is None:
-        return False
-    img = img.crop(content_rect(img))
-    if box:
-        w, h = img.size
-        img = img.crop((int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h)))
-        img = img.resize((img.width * scale, img.height * scale))
-    return yes(vlm, img, question)
-
-
 SETTINGS_FRONT = 'Does this menu bar show "System Settings" as the active app name next to the Apple logo?'
-MENU_BAR_LEFT = (0, 0, 0.32, 0.06)
-
 
 # With the KVM as mirror master the Mac runs the KVM's only mode, 1280x720, so the Apple menu is laid out
 # identically on every Mac: logo at the top-left corner, "System Settings..." as the second item.
