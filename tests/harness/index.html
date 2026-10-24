@@ -1,0 +1,48 @@
+<!doctype html><html><head><meta charset="utf-8"><title>ai-kvm input harness</title>
+<style>
+ body{margin:0;font:16px sans-serif;background:#fff;color:#111}
+ #log{position:fixed;left:8px;bottom:8px;font:12px monospace;color:#666}
+ .w{position:absolute;border:2px solid #333;background:#eee}
+ #box{left:200px;top:200px;width:200px;height:120px;background:#c33}
+ #handle{position:absolute;right:-8px;bottom:-8px;width:16px;height:16px;background:#06c;cursor:nwse-resize}
+ #slider{left:200px;top:400px;width:400px}
+ #ctx{left:700px;top:200px;width:200px;height:120px}
+ #dbl{left:700px;top:400px;width:200px;height:60px;line-height:60px;text-align:center;user-select:text}
+ #hover{left:700px;top:520px;width:200px;height:60px;line-height:60px;text-align:center}
+ #tip{position:absolute;left:700px;top:590px;display:none;background:#ff0;padding:4px}
+ #field{left:200px;top:520px;width:300px;height:30px}
+ #scroller{left:200px;top:600px;width:400px;height:80px;overflow:auto}
+ #sum{position:fixed;right:8px;top:8px;font:11px monospace;max-width:420px;white-space:pre-wrap;color:#444}
+</style></head><body>
+<div class="w" id="box"><div id="handle"></div></div>
+<input class="w" id="slider" type="range" min="0" max="100" value="50">
+<div class="w" id="ctx">right-click me</div>
+<div class="w" id="dbl">alpha bravo charlie</div>
+<div class="w" id="hover">hover me</div><div id="tip">tooltip</div>
+<input class="w" id="field" placeholder="type here">
+<div class="w" id="scroller"><div style="height:800px">scroll me<br>line 2<br>line 3<br>line 4<br>line 5<br>line 6<br>line 7<br>line 8<br>line 9<br>line 10<br>line 11<br>line 12<br>line 13<br>line 14<br>line 15<br>line 16<br>line 17<br>line 18<br>line 19<br>line 20<br>line 21<br>line 22<br>line 23<br>line 24<br>line 25<br>line 26<br>line 27<br>line 28<br>line 29<br>line 30</div></div>
+<div id="log"></div><div id="sum"></div>
+<script>
+const S = {events:[], box:{w:200,h:120}, slider:50, ctxmenu:0, dblclick:null, hover:0, field:"", scroll:0, clicks:[], keys:[]};
+const push = (e) => { S.events.push(e); if (S.events.length>400) S.events.shift(); render(); };
+let pending=null;
+const report = () => { if (pending) return; pending=setTimeout(()=>{ pending=null; fetch('/state',{method:'POST',body:JSON.stringify(S),headers:{'content-type':'application/json'}}).catch(()=>{}); }, 150); };
+const render = () => { report(); document.getElementById('sum').textContent = JSON.stringify({box:S.box, slider:S.slider, ctxmenu:S.ctxmenu, dblclick:S.dblclick, hover:S.hover, field:S.field, scroll:S.scroll, clicks:S.clicks.slice(-5), keys:S.keys.slice(-5), n:S.events.length}, null, 0); };
+window.__state = () => JSON.stringify(S);
+// resize handle: mousedown on handle, mousemove deltas resize the box, mouseup ends
+const box=document.getElementById('box'), handle=document.getElementById('handle');
+let drag=null;
+handle.addEventListener('mousedown', e => { drag={x:e.clientX,y:e.clientY,w:S.box.w,h:S.box.h,moves:0}; push({t:'down',target:'handle',x:e.clientX,y:e.clientY,button:e.button}); e.preventDefault(); });
+window.addEventListener('mousemove', e => { if(drag){ drag.moves++; S.box.w=Math.max(20,drag.w+(e.clientX-drag.x)); S.box.h=Math.max(20,drag.h+(e.clientY-drag.y)); box.style.width=S.box.w+'px'; box.style.height=S.box.h+'px'; } });
+window.addEventListener('mouseup', e => { if(drag){ push({t:'up',target:'handle',moves:drag.moves,x:e.clientX,y:e.clientY}); drag=null; } });
+document.getElementById('slider').addEventListener('input', e => { S.slider=+e.target.value; push({t:'slider',v:S.slider}); });
+document.getElementById('ctx').addEventListener('contextmenu', e => { e.preventDefault(); S.ctxmenu++; push({t:'contextmenu',x:e.clientX,y:e.clientY}); });
+document.getElementById('dbl').addEventListener('dblclick', e => { S.dblclick=String(window.getSelection()); push({t:'dblclick',sel:S.dblclick}); });
+document.getElementById('hover').addEventListener('mouseenter', e => { S.hover++; document.getElementById('tip').style.display='block'; push({t:'hover'}); });
+document.getElementById('hover').addEventListener('mouseleave', e => { document.getElementById('tip').style.display='none'; });
+document.getElementById('field').addEventListener('input', e => { S.field=e.target.value; push({t:'input',v:S.field}); });
+document.getElementById('scroller').addEventListener('scroll', e => { S.scroll=e.target.scrollTop; push({t:'scroll',top:S.scroll}); });
+window.addEventListener('click', e => { S.clicks.push({x:e.clientX,y:e.clientY,meta:e.metaKey,shift:e.shiftKey,alt:e.altKey,ctrl:e.ctrlKey,target:e.target.id||e.target.tagName}); push({t:'click',meta:e.metaKey,shift:e.shiftKey,target:e.target.id||e.target.tagName}); });
+window.addEventListener('keydown', e => { S.keys.push({key:e.key,meta:e.metaKey,ctrl:e.ctrlKey,alt:e.altKey,shift:e.shiftKey}); if (e.key==='F9') { S.events=[]; S.clicks=[]; S.keys=[]; S.box={w:200,h:120}; box.style.width='200px'; box.style.height='120px'; S.ctxmenu=0; S.dblclick=null; S.hover=0; S.field=''; document.getElementById('field').value=''; S.scroll=0; document.getElementById('scroller').scrollTop=0; render(); } else push({t:'key',key:e.key}); });
+render();
+</script></body></html>

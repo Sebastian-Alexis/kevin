@@ -99,8 +99,11 @@ def run_action(a):
         time.sleep(0.1)
         mouse.release(b)
     elif t == "mouse_down":
+        time.sleep(0.05)   # let the preceding move register before the press (pages drop a press mid-move)
         mouse.press(a.get("button", "left"))
+        time.sleep(0.12)
     elif t == "mouse_up":
+        time.sleep(0.1)
         mouse.release(a.get("button", "left"))
     elif t == "glide":   # frame-paced move (for a drag with the button already held)
         x0, y0 = _abs(a, "x", "y")
@@ -117,6 +120,13 @@ def run_action(a):
         kbd.type_text(a["text"])
     elif t == "key":
         kbd.combo(a["combo"])
+    elif t == "release":   # let go of every key and button (a crashed client may have left a modifier held)
+        kbd.release_all()
+        for b in ("left", "right", "middle"):
+            try:
+                mouse.release(b)
+            except Exception:
+                pass
     elif t == "wait":
         time.sleep(int(a["ms"]) / 1000)
     else:

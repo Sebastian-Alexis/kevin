@@ -34,7 +34,8 @@ one already running (front window, windows behind it, Dock dots); never launch o
 open one serves. When you are confident about several actions (e.g. several items to select then a Submit, or a
 field to click then text to type then Enter), do them in one batch of tool calls. You get a screenshot back after
 every batch once the screen has settled, so do not spend a turn on a lone screenshot: if the screen may still be
-loading, batch a short wait with the next action instead. Prefer keyboard shortcuts for
+loading, batch a short wait with the next action instead. A drag changes the layout (a handle or slider is now
+somewhere else): one drag per batch, then look before the next. Prefer keyboard shortcuts for
 navigation (cmd+t, cmd+l, cmd+f to jump to text on a page). On this Mac the launcher is cmd+space (Raycast).
 When the task is complete, or impossible, stop calling tools and say so in one short paragraph."""
 
@@ -150,6 +151,9 @@ class Session:
                 raise ValueError("drag start and end are the same point; give start_coordinate")
             self.kvm.actions([{"type": "drag", "x": sx, "y": sy, "to_x": ex, "to_y": ey, "button": "left"}])
             self.pointer = (ex, ey)
+            self.frame = None
+            return ("dragged; the layout may have moved (handles, sliders): take a screenshot before the next drag "
+                    "rather than reusing old coordinates"), None
         elif a == "left_mouse_down":
             if inp.get("coordinate"):
                 self.pointer = self.frac(inp["coordinate"])
@@ -295,6 +299,7 @@ class Session:
     # --- loop -------------------------------------------------------------------------------------------------
     def run(self, task, max_turns=40, settle_max=2.0):
         self.task, self.typed = task, None
+        self.kvm.actions([{"type": "release"}])   # nothing held over from an earlier run or crash
         img0 = self.screen(fresh=True)
         if self.computer in (None, "", "auto", "mac"):
             # the daemon's first contact identifies the machine (its login/mirroring screen names the user); else the
@@ -331,10 +336,17 @@ class Session:
             results, t1 = [], time.monotonic()
             if self.stop:   # the model answered after a stop request: do not touch the computer
                 self.log("stopped by caller"); result = {"done": False, "fail": "stopped", "turns": turn}; break
+            dragged = False
             for i, c in enumerate(calls):
                 if self.stop:   # cancelled mid-batch: no further input reaches the computer
                     results.append({"type": "tool_result", "tool_use_id": c["id"], "content": "stopped", "is_error": True})
                     continue
+                if dragged and c["input"].get("action") in ("left_click_drag", "left_click", "double_click", "left_mouse_down"):
+                    # a drag reflows the UI: later pointer actions in the same batch would use stale coordinates
+                    results.append({"type": "tool_result", "tool_use_id": c["id"], "is_error": True,
+                                    "content": "skipped: a drag earlier in this batch changed the layout; look again first"})
+                    continue
+                dragged = dragged or c["input"].get("action") == "left_click_drag"
                 try:
                     note, image = self.do(c["input"])
                     if i == len(calls) - 1 and image is None:
