@@ -9,3 +9,6 @@ __pycache__/
 .venv/
 .venv-s3/
 runs/
+data/
+*.egg-info/
+training/saves/

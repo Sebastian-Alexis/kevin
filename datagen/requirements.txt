@@ -1,0 +1,8 @@
+pillow>=10
+remotezip>=0.12
+playwright>=1.45
+anthropic>=0.70
+pydantic>=2
+# macOS only (ax_grounding.py)
+pyobjc-framework-ApplicationServices>=10; sys_platform == "darwin"
+pyobjc-framework-Quartz>=10; sys_platform == "darwin"
