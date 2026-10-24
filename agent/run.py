@@ -30,7 +30,7 @@ Previous turns:
 %(past)s
 Reply with ONLY one JSON object, no prose:
 {"plan": "<=80 words: possible groupings of the items, the surest one and why, and the moves this turn makes", "observe": "<=8 words: what changed / what you see", "steps": [{"actions": ["...", "..."], "expect": "<=12 words: what the screen shows if this step worked"}], "done": false}
-Plan as far ahead as this screenshot allows: several steps run in sequence without you looking again, as long as each step's "expect" is confirmed on the screen; the first step whose expectation fails stops the turn and you see the screen again.
+Plan as far ahead as this screenshot allows: several steps run in sequence without you looking again, as long as each step's "expect" is confirmed on the screen; the first step whose expectation fails stops the turn and you see the screen again. Whenever you are confident about more than one move (e.g. you can see two or more complete groups, or a form with several fields), put them all in "steps" now: each extra step saves a full round trip.
 Each action is one short string:
  "click <target> @x,y"   (also "double_click", "right_click"; x,y = center of the element, %(coords)s; target = short unique description)
  "type <text>"           types into whatever has keyboard focus
@@ -513,6 +513,8 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                     decision = parse(reply)
                     queue = list(decision.get("steps") or ([{"actions": decision.get("actions", []), "expect": ""}]
                                                            if decision.get("actions") is not None else []))
+                if reply is not None and len(queue) > 1:
+                    log(f"  planned {len(queue)} steps: {[q.get('expect', '')[:50] for q in queue]}")
                 current = queue.pop(0) if queue else {"actions": [], "expect": ""}
                 expect = str(current.get("expect", ""))[:120]
                 actions = split_actions(current.get("actions", []))
