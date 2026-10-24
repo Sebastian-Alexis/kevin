@@ -75,7 +75,7 @@ def _write(obj, buf):
         except BlockingIOError:
             _, w, _ = select.select([], [obj.fd], [], WRITE_TIMEOUT)
             if not w:
-                raise HostNotConnected("USB host not reading HID reports (is the target plugged in?)")
+                raise HostNotConnected("USB host not polling HID endpoint (target unplugged, asleep, or no input consumer open)")
             os.write(obj.fd, buf)
             return
         except OSError:
