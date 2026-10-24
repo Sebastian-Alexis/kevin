@@ -23,6 +23,10 @@ class KVM:
         with urllib.request.urlopen(self.base + "/screenshot", timeout=self.timeout) as r:
             return Image.open(io.BytesIO(r.read())).convert("RGB")
 
+    def health(self):
+        with urllib.request.urlopen(self.base + "/health", timeout=self.timeout) as r:
+            return json.load(r)
+
     def actions(self, actions):
         req = urllib.request.Request(self.base + "/actions", json.dumps({"actions": actions}).encode(),
                                      {"Content-Type": "application/json"})
