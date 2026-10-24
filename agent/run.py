@@ -28,15 +28,14 @@ Target OS: %(os)s
 Previous turns:
 %(past)s
 Reply with ONLY one JSON object, no prose:
-{"observe": "<=8 words: what changed / what you see", "actions": [{...}, {...}], "done": false}
-Each action is its own object, e.g. [{"click": {...}}, {"type": "hello"}, {"key": "enter"}].
-Actions (point_2d = [x, y] center of the element, normalized 0-1000; target = short unique description):
- {"click": {"target": "address bar", "point_2d": [x, y]}} (same shape for "double_click" and "right_click")
- {"type": "text"} types into whatever has keyboard focus
- {"key": "cmd+l"} key combo of cmd ctrl alt shift + a-z 0-9 enter esc tab backspace delete space up down left right home end pageup pagedown f1-f12
- {"scroll": {"target": "page body", "point_2d": [x, y], "ticks": -5}} negative ticks scroll down
- {"wait": ms}
- {"open_app": "Safari"} brings that app to the front, starting it if needed; ends the turn
+{"think": "<=25 words: work out what to do before acting (e.g. which items belong together and why); then act on ONE conclusion", "observe": "<=8 words: what changed / what you see", "actions": [{...}, {...}], "done": false}
+Each action is one short string:
+ "click <target> @x,y"   (also "double_click", "right_click"; x,y = center of the element, %(coords)s; target = short unique description)
+ "type <text>"           types into whatever has keyboard focus
+ "key cmd+l"             key combo of cmd ctrl alt shift + a-z 0-9 enter esc tab backspace delete space up down left right home end pageup pagedown f1-f12
+ "scroll <target> @x,y -5"   negative = down
+ "wait <ms>"             only for things that take longer than 2 s (the next screenshot is taken once the screen has settled anyway)
+ "open_app <name>"       brings that app to the front, starting it if needed; ends the turn
 Rules:
 - Keystrokes go to the focused window. Right after open_app the app's shortcuts work directly (e.g. cmd+t, cmd+l), but text needs an input with focus first (that shortcut or a click on it). Otherwise, before any "type" or "key", click the exact field or window you mean in the same turn.
 - Windows overlap and look alike: whenever you are not sure the task's app is the frontmost window, open_app it.
@@ -44,36 +43,25 @@ Rules:
 - Never type into terminals, chats or apps the task does not name.
 - Only target things visible in this screenshot; for anything not visible yet, end the turn and look again.
 - If the last turn did not work, do something different instead of repeating it.
-- Batch only what you can see (e.g. click a visible field, type, enter).
-Task complete: {"observe": "...", "actions": [], "done": true}. Impossible: {"observe": "...", "actions": [], "fail": "reason"}."""
+- Batch only what you can see (e.g. click a visible field, type, enter), and finish the move in the same batch: when a confirm/submit/OK button is visible, click it too.
+Task complete: {"think": "...", "observe": "...", "actions": [], "done": true}. Impossible: {"think": "...", "observe": "...", "actions": [], "fail": "reason"}."""
 
 CLICKS = ("click", "double_click", "right_click")
+HISTORY_TURNS = 8   # turns of history shown to the model
 
 
-def _only(name, schema):
-    return {"type": "object", "properties": {name: schema}, "required": [name], "additionalProperties": False}
-
-
-_POINT = {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
-_TARGET = {"type": "object", "properties": {"target": {"type": "string"}, "point_2d": _POINT},
-           "required": ["target", "point_2d"], "additionalProperties": False}
 # Replies are constrained to this (vLLM structured outputs): free-form replies dropped a brace in ~1 of 8 turns.
+# Actions are one-line strings (see PLAN): ~3x fewer output tokens than one object per action, and output tokens
+# are what a step's model time is made of.
 TURN_SCHEMA = {
     "type": "object",
     "properties": {
+        "think": {"type": "string"},
         "observe": {"type": "string"},
-        "actions": {"type": "array", "items": {"anyOf": [
-            *(_only(k, _TARGET) for k in CLICKS),
-            _only("type", {"type": "string"}),
-            _only("key", {"type": "string"}),
-            _only("scroll", {"type": "object", "properties": {"target": {"type": "string"}, "point_2d": _POINT,
-                                                              "ticks": {"type": "integer"}},
-                             "required": ["target", "point_2d", "ticks"], "additionalProperties": False}),
-            _only("wait", {"type": "integer"}),
-            _only("open_app", {"type": "string"})]}},
+        "actions": {"type": "array", "items": {"type": "string"}},
         "done": {"type": "boolean"},
         "fail": {"type": "string"}},
-    "required": ["observe", "actions", "done"],
+    "required": ["think", "observe", "actions", "done"],
     "additionalProperties": False}
 
 
@@ -101,11 +89,39 @@ def point(text):
     raise ValueError(f"no point in grounding reply: {text[:120]!r}")
 
 
+ACTION_RE = re.compile(r"^\s*(click|double_click|right_click|scroll)\s+(.*?)\s*@\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*(-?\d+)?\s*$", re.S)
+
+
+def parse_action(s):
+    """One action string -> the dict form the rails and executor work on. Dicts (older replies) pass through."""
+    if isinstance(s, dict):
+        return [{k: v} for k, v in s.items()]
+    s = str(s).strip()
+    m = ACTION_RE.match(s)
+    if m:
+        kind, target, x, y, ticks = m.groups()
+        spec = {"target": target.strip(), "point_2d": [float(x), float(y)]}
+        if kind == "scroll":
+            spec["ticks"] = int(ticks) if ticks else -3
+        return [{kind: spec}]
+    verb, _, rest = s.partition(" ")
+    verb = verb.lower()
+    if verb == "type":
+        return [{"type": rest}]
+    if verb == "key":
+        return [{"key": rest.strip()}]
+    if verb == "wait":
+        return [{"wait": int(float(rest.strip() or 0))}]
+    if verb == "open_app":
+        return [{"open_app": rest.strip()}]
+    raise ValueError(f"unknown action {s!r}")
+
+
 def split_actions(actions):
-    """Split objects holding several actions ({"click": ..., "type": ..., "key": ...}) in written order."""
+    """Reply actions (strings, or objects from older replies) -> one dict per action, in written order."""
     out = []
     for a in actions:
-        out += [{k: v} for k, v in a.items()] if isinstance(a, dict) else [a]
+        out += parse_action(a)
     return out
 
 
@@ -147,8 +163,8 @@ def hid_actions(actions):
         if kind:
             _, (x, y) = spec_point(a[kind])
             fx, fy = to_hid(x, y)
-            out += [{"type": "move", "x": max(0.0, fx - 0.004), "y": fy}, {"type": "wait", "ms": 40},
-                    {"type": "move", "x": fx, "y": fy}, {"type": "wait", "ms": 80},
+            out += [{"type": "move", "x": max(0.0, fx - 0.004), "y": fy}, {"type": "wait", "ms": 20},
+                    {"type": "move", "x": fx, "y": fy}, {"type": "wait", "ms": 40},
                     {"type": "click", "button": "right" if kind == "right_click" else "left",
                      "count": 2 if kind == "double_click" else 1}]
         elif "type" in a:
@@ -375,6 +391,7 @@ def show_all(kvm, vlm):
     def menu_top(img):   # menu bar, Help search field and the first results: enough to judge, few image tokens
         x0, y0, x1, y1 = content_rect(img)
         return img.crop((x0, y0, x1, y0 + int((y1 - y0) * 0.2)))
+    reveal_menu_bar(kvm)   # with the bar auto-hidden the Help shortcut is swallowed until the bar is on screen
     kvm.actions([{"type": "key", "combo": "cmd+shift+/"}])
     # Settles are capped where the menu renders at once: behind a page that keeps animating (streamed search
     # answers) a full-screen settle never converges and would cost its whole timeout each time.
@@ -401,7 +418,8 @@ def show_all(kvm, vlm):
     return False
 
 
-def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=False, save_dir=None, log=print):
+def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=False, save_dir=None, log=print,
+        coords="norm"):
     """Drive the computer until the model reports the task done or impossible. An app the task names is brought
     to the front before the first look (on macOS with the other apps hidden until the run ends)."""
     history, batches, frame = [], [], None
@@ -430,15 +448,30 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             if save_dir:
                 screen.save(os.path.join(save_dir, f"step{step:02d}.jpg"), quality=85)
             image = vlm.image_part(screen)
+            sw, sh = vlm.sent_size(screen)
+            # Qwen grounds on a 0-1000 grid; Anthropic models answer in pixels of the picture they were given
+            coord_text = ("normalized 0-1000" if coords == "norm"
+                          else f"pixel coordinates in this {sw}x{sh} screenshot")
             t_cap = time.monotonic() - t0
-            past = ("\n".join(f"{i}. {h}" for i, h in enumerate(history, 1))
+            # The last turns only: on long tasks the prompt grew to ~7k tokens by turn 30, slowing every call
+            recent = history[-HISTORY_TURNS:]
+            omitted = len(history) - len(recent)
+            past = ("\n".join(f"{i}. {h}" for i, h in enumerate(recent, len(history) - len(recent) + 1))
                     or "(none yet. If the task names an app, start with open_app for it.)")
+            if omitted:
+                past = f"({omitted} earlier turns omitted)\n" + past
             reply, usage, t_plan = vlm.chat([{"role": "system", "content": SYSTEM},
                                              {"role": "user", "content": [image, {"type": "text", "text": PLAN % {
-                                                 "task": task, "os": os_name, "past": past}}]}], 400, TURN_SCHEMA)
+                                                 "task": task, "os": os_name, "past": past, "coords": coord_text}}]}],
+                                            700, TURN_SCHEMA)
             try:
                 decision = parse(reply)
                 actions = split_actions(decision.get("actions", []))
+                if coords != "norm":
+                    for a in actions:
+                        for spec in a.values():
+                            if isinstance(spec, dict) and isinstance(spec.get("point_2d"), list) and len(spec["point_2d"]) == 2:
+                                spec["point_2d"] = [spec["point_2d"][0] * 1000 / sw, spec["point_2d"][1] * 1000 / sh]
                 observe = str(decision.get("observe", ""))[:120]
                 summary = json.dumps(actions, separators=(",", ":"))
                 repeated = actions and batches[-2:] == [summary, summary]
@@ -461,9 +494,13 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             notes = [f"{dropped} later action(s) skipped: open_app ends the turn"] if dropped else []
             t1 = time.monotonic()
             if not dry_run:
-                blocked = False
+                blocked, settle_cap = False, settle_max
                 for kind, arg in plan:
                     if kind == "hid":
+                        # a trailing wait is the model's guess at how long the UI needs: the settle below watches
+                        # the screen instead, so take it as the settle cap rather than sleeping it out blind
+                        if arg and arg[-1]["type"] == "wait" and arg[-1] is plan[-1][1][-1]:
+                            settle_cap, arg = max(settle_cap, arg[-1]["ms"] / 1000), arg[:-1]
                         kvm.actions(arg)
                         # a click can move keyboard focus anywhere: another window, the desktop
                         focused = focused and not any(a["type"] == "click" for a in arg)
@@ -483,7 +520,8 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                 tail = plan[-1][1][-1] if plan and plan[-1][0] == "hid" and not blocked else {}
                 primed = tail.get("type") == "key" and tail["combo"].lower().replace(" ", "") in FOCUS_KEYS
                 if plan and frame is None and not done:
-                    frame = latest(kvm, timeout=settle_max, interval=0.2, tolerance=1.5, first_delay=0.15)
+                    # paced by the capture itself (~70 ms a frame at 14 fps): an instant UI change settles in ~0.25 s
+                    frame = latest(kvm, timeout=settle_cap, interval=0.0, tolerance=2.0, first_delay=0.1)
             t_act = time.monotonic() - t1
             extra = "".join(f" | {n}" for n in notes)
             history.append(f"saw: {observe} | did: {summary}{extra}")
@@ -496,7 +534,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
         if hidden:
             t0 = time.monotonic()
             try:
-                shown = show_all(kvm, vlm)
+                shown = show_all(kvm, vlm) or show_all(kvm, vlm)   # the Help shortcut is occasionally swallowed
             except Exception as e:   # tidying up must not replace the task result (or its exception)
                 shown = f"failed ({e})"
             log(f"show all: {shown} ({time.monotonic() - t0:.2f}s)")
@@ -512,6 +550,8 @@ def main(argv=None):
     p.add_argument("--os", default="macOS", dest="os_name")
     p.add_argument("--max-steps", type=int, default=20)
     p.add_argument("--max-side", type=int, default=1280, help="downscale screenshots so the longest side is at most this")
+    p.add_argument("--coords", choices=["norm", "pixels"], default=None,
+                   help="coordinate space the model answers in (default: pixels for claude/anthropic models, else norm)")
     p.add_argument("--settle-max", type=float, default=2.0,
                    help="after acting, wait for the screen to stop changing, at most this many seconds")
     p.add_argument("--save-dir")
@@ -520,7 +560,8 @@ def main(argv=None):
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
     vlm = VLM(a.llm, a.model, key=load_key(a.key_file), max_side=a.max_side)
-    result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir)
+    coords = a.coords or ("pixels" if any(k in a.model.lower() for k in ("claude", "anthropic")) else "norm")
+    result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 

@@ -170,24 +170,28 @@ def safe_code(code):
     else it can emit (wmctrl, sudo via subprocess, LibreOffice UNO for set_cell_values, the pyperclip pip install
     fallback) targets the machine the agent believes it is on, which here is the controller, not the target.
     Returns (code, None) or (None, offending statements)."""
-    code = re.sub(r"\ntry:\n    import pyperclip\nexcept ImportError:.*?    import pyperclip\n", "\nimport pyperclip\n",
-                  code, flags=re.S)
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
         return None, [f"syntax error: {e}"]
-    bad = [ast.unparse(n) for n in tree.body if not _ok_stmt(n)]
-    return (code, None) if not bad else (None, bad)
+    body = []
+    for n in tree.body:
+        # `try: import pyperclip / except ImportError: <pip install>`: keep the import, drop the installer
+        if isinstance(n, ast.Try) and len(n.body) == 1 and _ok_stmt(n.body[0]):
+            n = n.body[0]
+        body.append(n)
+    bad = [ast.unparse(n) for n in body if not _ok_stmt(n)]
+    return ("\n".join(ast.unparse(n) for n in body), None) if not bad else (None, bad)
 
 
-def run(agent, screen, kvm, vlm, task, max_steps, save_dir, platform="darwin", dry_run=False, log=print):
+def run(agent, screen, kvm, vlm, task, max_steps, save_dir, platform="darwin", dry_run=False, app=None, log=print):
     """Agent S3's predict/exec loop over the KVM, inside the same rails as agent.run: the app the task names is
     raised first and the other apps hidden (so a stray click cannot reach them), and they are shown again at the
     end. dry_run logs the pyautogui calls instead of sending them."""
     os_name = "macOS" if platform == "darwin" else platform
     hidden = False
     try:
-        app = None if dry_run else task_app(vlm, task)
+        app = None if dry_run else (app or task_app(vlm, task))
         if app:
             focused, note, _ = open_app(kvm, vlm, app, os_name)
             hidden = focused and platform == "darwin"
@@ -251,6 +255,8 @@ def main(argv=None):
     p.add_argument("--height", type=int, default=720)
     p.add_argument("--save-dir")
     p.add_argument("--dry-run", action="store_true", help="ask the agent but log the input it would send instead")
+    p.add_argument("--app", help="app to raise and isolate in (Hide Others) when the task does not name one; "
+                                 "the task text itself is passed to the agent unchanged")
     a = p.parse_args(argv)
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
@@ -259,7 +265,7 @@ def main(argv=None):
     install_stubs(screen)
     agent = build_agent(a, a.platform)
     vlm = VLM(a.llm, a.ground_model, key=load_key(a.key_file))   # the rails (open_app, show_all) use the local model
-    result = run(agent, screen, kvm, vlm, a.task, a.max_steps, a.save_dir, a.platform, a.dry_run)
+    result = run(agent, screen, kvm, vlm, a.task, a.max_steps, a.save_dir, a.platform, a.dry_run, a.app)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 

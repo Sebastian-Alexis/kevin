@@ -32,10 +32,16 @@ class VLM:
         self.max_side = max_side
         self.quality = quality
 
+    def sent_size(self, img):
+        """Size of the picture the model receives (image_part downscales to max_side)."""
+        if max(img.size) <= self.max_side:
+            return img.size
+        s = self.max_side / max(img.size)
+        return round(img.width * s), round(img.height * s)
+
     def image_part(self, img):
         if max(img.size) > self.max_side:
-            s = self.max_side / max(img.size)
-            img = img.resize((round(img.width * s), round(img.height * s)))
+            img = img.resize(self.sent_size(img))
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=self.quality)
         data = base64.b64encode(buf.getvalue()).decode()
