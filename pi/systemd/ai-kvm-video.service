@@ -1,10 +1,11 @@
 [Unit]
 Description=ai-kvm HDMI capture (tc358743 + ustreamer)
 After=multi-user.target
+ConditionPathExists=/dev/video0
 
 [Service]
 ExecStartPre=/opt/ai-kvm/video/capture-init.sh /dev/video0
-ExecStart=/usr/bin/ustreamer --device=/dev/video0 --format=uyvy --dv-timings --persistent \
+  --encoder=M2M-IMAGE --quality=80 --desired-fps=15 --workers=1 --drop-same-frames=15 \
   --encoder=HW --quality=80 --desired-fps=15 --workers=1 --drop-same-frames=15 \
   --host=127.0.0.1 --port=8081 --allow-origin=*
 Restart=always
