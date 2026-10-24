@@ -35,7 +35,7 @@ on disk elsewhere) and `/opt/qwen27/serve.sh` inside it. Settings in `/etc/qwen2
 
     MODEL=nvidia/Qwen3.8-27B-NVFP4   SERVED_NAME=qwen27   PORT=8000
     MAX_MODEL_LEN=16384   MAX_NUM_SEQS=4   MAX_BATCHED_TOKENS=8192
-    GPU_MEM=0.70          # ~84 GiB budget of 119; leaves >30 GiB for everything else
+    GPU_MEM=0.55          # ~65 GiB budget of 119 (KV pool 284k tokens); host shows ~42 GB available while serving
     KV_DTYPE=auto         # fp8 KV needs FLASHINFER; KV is a non-issue at this context
     BACKEND=flash_attn    SPEC_TOKENS=6   LOAD_FORMAT=fastsafetensors   EXTRA_ARGS=
 
@@ -43,7 +43,7 @@ on disk elsewhere) and `/opt/qwen27/serve.sh` inside it. Settings in `/etc/qwen2
 
     vllm serve $MODEL --served-model-name qwen27 --host 127.0.0.1 --port 8000 \
       --max-model-len 16384 --max-num-seqs 4 --max-num-batched-tokens 8192 \
-      --gpu-memory-utilization 0.70 --kv-cache-dtype auto \
+      --gpu-memory-utilization 0.55 --kv-cache-dtype auto \
       --enable-prefix-caching --enable-chunked-prefill --trust-remote-code \
       --load-format fastsafetensors --attention-backend flash_attn \
       --limit-mm-per-prompt '{"image":4,"video":0}' \
@@ -75,7 +75,7 @@ request at a time, 5 timed calls after a warm-up. Ground truth for the COMIC til
 | Qwen3.8-27B-FP8, no spec                 | 8.55 s  | 67      | (331, 620) |
 | Qwen3.8-27B-FP8, MTP n=3                 | 4.43 s  | 63      | (335, 622) |
 | Qwen3.8-27B-FP8, MTP n=6                 | 4.30 s  | 63      | (331, 622) |
-| **Qwen3.8-27B-NVFP4, MTP n=6** (shipped) | 2.54 s  | 71      | (333, 622) |
+| **Qwen3.8-27B-NVFP4, MTP n=6** (shipped) | 2.54 s (GPU_MEM 0.70) / 2.72 s (0.55, 67 tok) | 71 | (333, 622) / (335, 620) |
 | Qwen3.8-27B-NVFP4, MTP n=6 + `--async-scheduling` | 2.68 s | 67 | (335, 622) |
 
 Shipped config breakdown: TTFT ≈ 0.7 s (prefill ≈ 1000 tok/s + vision encoder), decode ≈ 39 tok/s (MTP
@@ -89,4 +89,6 @@ Notes:
 - Prefix caching is on but reports 0 hits: the hybrid GDN layout forces a 816-token attention block
   ("align" mamba cache mode), so the ~440-token system prefix never fills a block. Harmless.
 - `--async-scheduling` (EXTRA_ARGS) was slower per token (40 vs 36 ms) with structured outputs + MTP; not kept.
-- The KV pool is ~400k tokens at this setting; concurrency 4 is plenty for one KVM.
+- The KV pool is ~284k tokens at GPU_MEM 0.55; concurrency 4 is plenty for one KVM. The 0.70→0.55 change
+  coincided with 2.54→2.72 s p50 on a 67-token reply (40 vs 36 ms/token); run-to-run output length varies, so
+  treat the two as the same config within noise.
