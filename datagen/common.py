@@ -75,6 +75,11 @@ class Shard:
         self.n_frames = 0
         self.n_steps = 0
         self.rejected = 0
+        self._write_meta()  # written up front too, so a crashed run's shard is still usable
+
+    def _write_meta(self):
+        self.meta.update(n_frames=self.n_frames, n_steps=self.n_steps, rejected=self.rejected)
+        (self.dir / "meta.json").write_text(json.dumps(self.meta, indent=2))
 
     def add_frame(self, img):
         """Save a (resized) frame and return its relative path."""
@@ -100,13 +105,13 @@ class Shard:
         if extra:
             rec["extra"] = extra
         self._steps.write(json.dumps(rec) + "\n")
+        self._steps.flush()
         self.n_steps += 1
         return True
 
     def close(self):
         self._steps.close()
-        self.meta.update(n_frames=self.n_frames, n_steps=self.n_steps, rejected=self.rejected)
-        (self.dir / "meta.json").write_text(json.dumps(self.meta, indent=2))
+        self._write_meta()
 
     def __enter__(self):
         return self
