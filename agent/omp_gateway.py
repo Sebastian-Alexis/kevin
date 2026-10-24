@@ -56,6 +56,14 @@ class Gateway:
         return out[0]
 
 
+def fix_thinking(body):
+    """Droid sends Anthropic's newer `thinking.type: between_tools` (and friends); omp's adapter only knows
+    enabled/disabled/adaptive. Map anything else to adaptive so the request is not rejected."""
+    th = body.get("thinking") if isinstance(body, dict) else None
+    if isinstance(th, dict) and th.get("type") not in (None, "enabled", "disabled", "adaptive"):
+        body["thinking"] = {"type": "adaptive"}
+
+
 def fix_images(body):
     """Agent S3's vLLM path emits `data:image;base64,` (no MIME subtype); Codex rejects that. Our frames are PNG."""
     for m in body.get("messages", []) if isinstance(body, dict) else []:
@@ -100,6 +108,7 @@ def make_handler(gw, key=None):
                 self.send_error(400, "body is not JSON")
                 return
             fix_images(body)
+            fix_thinking(body)
             t0 = time.monotonic()
             msg = gw.request(self.path, body)
             if os.environ.get("OMP_GATEWAY_TRACE"):
