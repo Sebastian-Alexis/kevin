@@ -465,13 +465,21 @@ def show_all(kvm, vlm):
 
 
 def ground(grounder, screen, target):
-    """0-1000 point of a described element from a grounding model (Holo4 on :8010, its native click tool). Returns
-    None when it finds nothing, which the off-screen check turns into a refused batch."""
+    """0-1000 point of a described element from a grounding model (Holo4 on :8010, its native click tool; or the
+    distilled point grounder, shared/ground.py). Returns None when it finds nothing, which the off-screen check
+    turns into a refused batch."""
     from .holo import TOOLS, chat   # local import: holo imports this module's rails
     import base64
     buf = io.BytesIO()
     screen.save(buf, format="JPEG", quality=80)
     part = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()}}
+    if grounder.get("format") == "point":
+        from shared import ground as g
+        text, _, _ = VLM(grounder["url"].removesuffix("/chat/completions"), grounder["model"], key=grounder["key"]).chat(
+            [{"role": "user", "content": [part, {"type": "text", "text": g.PROMPT.format(target=target)}]}],
+            schema=g.SCHEMA, max_tokens=32)
+        pt = g.parse(text)
+        return [int(pt[0]), int(pt[1])] if pt else None
     msgs = [{"role": "system", "content": "You are a computer-use agent operating a computer through the available tools."},
             {"role": "user", "content": f"Click on: {target}"},
             {"role": "user", "content": [{"type": "text", "text": "<observation>\n"}, part, {"type": "text", "text": "\n</observation>"}]}]
@@ -702,6 +710,8 @@ def main(argv=None):
     p.add_argument("--app", help="app to raise and isolate in (Hide Others) when the task text does not name one")
     p.add_argument("--grounder", default=None, help="grounding endpoint (e.g. http://127.0.0.1:8010/v1): the planner names targets, this model locates them")
     p.add_argument("--grounder-model", default="holo4")
+    p.add_argument("--grounder-format", choices=["holo", "point"], default="holo",
+                   help="holo: Holo4's click tool; point: the distilled grounder's point_2d reply (shared/ground.py)")
     p.add_argument("--show-all", action="store_true", help="at the end, bring back the apps Hide Others hid (off by default)")
     p.add_argument("--no-isolate", dest="isolate", action="store_false", help="do not raise the app / Hide Others first")
     p.add_argument("--verifier", default=os.environ.get("AIKVM_LLM_BASE", "http://127.0.0.1:8000/v1"),
@@ -712,10 +722,11 @@ def main(argv=None):
         os.makedirs(a.save_dir, exist_ok=True)
     vlm = VLM(a.llm, a.model, key=load_key(a.key_file), max_side=a.max_side)
     coords = a.coords or ("pixels" if any(k in a.model.lower() for k in ("claude", "anthropic")) else "norm")
-    grounder = ({"url": a.grounder.rstrip("/") + "/chat/completions", "model": a.grounder_model, "key": load_key(a.key_file)}
+    grounder = ({"url": a.grounder.rstrip("/") + "/chat/completions", "model": a.grounder_model, "key": load_key(a.key_file),
+                 "format": a.grounder_format}
                 if a.grounder else None)
     if grounder:
-        coords = "norm"   # Holo4 answers on the 0-1000 grid
+        coords = "norm"   # both grounder formats answer on the 0-1000 grid
     result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords,
                  app=a.app, grounder=grounder, restore=a.show_all, isolate=a.isolate,
                  verifier=VLM(a.verifier, a.verifier_model, key=load_key("/etc/gemma4-vllm-api-key")) if a.verifier else None)
