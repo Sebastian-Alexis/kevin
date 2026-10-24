@@ -126,7 +126,10 @@ A cron, an HTTP hook or another agent only needs to write a file. One-off runs w
 Droid's models come through BYOK (`~/.factory/settings.json` custom models pointing at `agent/omp_gateway.py`,
 the local Anthropic/OpenAI-compatible front for the models omp is logged into), so a run costs no Factory credits.
 The same server is registered in the Factory desktop app on the Mac as connector `ai-kvm` (added by this agent
-driving the app over the KVM), so an interactive Droid session there has the same two tools.
+driving the app over the KVM). A plain app session carries Factory's full toolset (19 tools, 38 KB of schemas on
+every model call, measured through the gateway trace), which is what makes it slow; `droids/computer.md` is a
+custom droid whose only surface is the `ai-kvm` connector (`tools: []`, `mcpServers: ["ai-kvm"]`): install it
+as `~/.factory/droids/computer.md` on the Mac and pick it in the app.
 
 Deploy to the KVM: `bash agent/deploy-mcp.sh` (rsyncs the `agent` package, builds the venv from offline wheels,
 installs the key and the unit).
