@@ -6,3 +6,4 @@ pydantic>=2
 # macOS only (ax_grounding.py)
 pyobjc-framework-ApplicationServices>=10; sys_platform == "darwin"
 pyobjc-framework-Quartz>=10; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10; sys_platform == "darwin"
