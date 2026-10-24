@@ -29,7 +29,9 @@ coordinates are pixels of the screenshot you were given. After each batch of act
 What is already open is the user's workflow: when the task names a kind of app (a browser, a terminal, mail), use the
 one already running (front window, windows behind it, Dock dots); never launch or sign in to a different one if an
 open one serves. When you are confident about several actions (e.g. several items to select then a Submit, or a
-field to click then text to type then Enter), do them in one batch of tool calls. Prefer keyboard shortcuts for
+field to click then text to type then Enter), do them in one batch of tool calls. You get a screenshot back after
+every batch once the screen has settled, so do not spend a turn on a lone screenshot: if the screen may still be
+loading, batch a short wait with the next action instead. Prefer keyboard shortcuts for
 navigation (cmd+t, cmd+l, cmd+f to jump to text on a page). On this Mac the launcher is cmd+space (Raycast).
 When the task is complete, or impossible, stop calling tools and say so in one short paragraph."""
 
