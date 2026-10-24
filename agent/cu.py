@@ -20,6 +20,8 @@ import sys
 import time
 import urllib.request
 
+from PIL import Image
+
 from .kvm import KVM, PLACEHOLDER_SIZE, content_rect
 from .memory import computer_id, learn, notes_text, recall, state_computer
 from .run import latest, typed_where_wanted
@@ -44,8 +46,8 @@ TOOL = {"name": "computer", "input_schema": {
                                                "cursor_position", "scroll", "wait", "zoom", "left_mouse_down",
                                                "left_mouse_up"]},
         "coordinate": {"type": "array", "items": {"type": "integer"}, "description": "[x, y] pixels of the screenshot"},
-        "start_coordinate": {"type": "array", "items": {"type": "integer"}, "description": "left_click_drag: the exact pixel to press on (required), e.g. a resize handle; coordinate is where it is released. To scale an object by its corner handle, drag the handle toward the object's centre to shrink (both axes), away from it to grow"},
-        "text": {"type": "string", "description": "type: the text; key: the key combo, e.g. cmd+l, Return, ctrl+shift+t"},
+        "start_coordinate": {"type": "array", "items": {"type": "integer"}, "description": "left_click_drag: the exact pixel to press on (required), e.g. a resize handle or a slider knob; coordinate is where it is released"},
+        "text": {"type": "string", "description": "type: the text; key: the key combo, e.g. cmd+l, Return, ctrl+shift+t; on a click: modifier(s) to hold during it, e.g. cmd or shift"},
         "scroll_direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
         "scroll_amount": {"type": "integer", "description": "scroll: number of wheel ticks (1 tick ~ 55 px; a screenful ~13)"},
         "duration": {"type": "number", "description": "wait: seconds"},
@@ -131,7 +133,10 @@ class Session:
             if a != "mouse_move":
                 btn = {"right_click": "right", "middle_click": "middle"}.get(a, "left")
                 count = {"double_click": 2, "triple_click": 3}.get(a, 1)
-                acts.append({"type": "click", "button": btn, "count": count})
+                click = {"type": "click", "button": btn, "count": count}
+                if inp.get("text"):   # the standard convention: `text` on a click = modifier(s) held during it
+                    click["modifiers"] = combo(str(inp["text"]), self.os_name.lower().startswith("mac"))
+                acts.append(click)
             self.kvm.actions(acts)
             self.typed, self.launcher = None, False
         elif a == "left_click_drag":
@@ -215,9 +220,11 @@ class Session:
             r = inp.get("region") or []
             if len(r) != 4:
                 raise ValueError("zoom needs region [x0, y0, x1, y1]")
-            img = self.screen(fresh=True).crop((r[0], r[1], r[2], r[3]))
-            s = min(2.0, self.max_side / max(1, max(img.size)))
-            img = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))))
+            self.frame = latest(self.kvm, timeout=2.0, interval=0.0, tolerance=2.0, first_delay=0.25)   # settle first
+            img = self.screen().crop((r[0], r[1], r[2], r[3]))
+            # enlarge so the region fills a readable frame (small text needs ~4x), never beyond the model's max side
+            s = min(4.0, self.max_side / max(1, max(img.size)))
+            img = img.resize((max(1, round(img.width * s)), max(1, round(img.height * s))), Image.LANCZOS)
             return f"zoomed region {r} (shown at {s:.1f}x; coordinates for actions stay in full-screenshot pixels)", self.shot_block(img, "zoom")
         else:
             raise ValueError(f"unknown action {a!r}")

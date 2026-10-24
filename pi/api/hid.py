@@ -132,6 +132,17 @@ class Keyboard:
             time.sleep(0.03)
             self._report()
 
+    def hold(self, spec):
+        """Press and hold modifiers ('cmd', 'cmd+shift') until release_all(): for modifier-clicks."""
+        mods = 0
+        for part in spec.lower().split("+"):
+            part = part.strip()
+            if part not in MOD:
+                raise ValueError(f"not a modifier: {part!r}")
+            mods |= MOD[part]
+        with self.lock:
+            self._report(mods)
+
     def type_text(self, text, delay=None):
         delay = KEY_GAP if delay is None else delay
         for ch in text:

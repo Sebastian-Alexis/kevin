@@ -8,6 +8,7 @@ POST /actions  {"actions": [...]} -> run a batch sequentially, one HTTP round tr
 Action objects (also accepted singly at POST /action):
   {"type": "move",   "x": 960, "y": 540, "width": 1920, "height": 1080}
   {"type": "click",  "x": .., "y": .., "width": .., "height": .., "button": "left", "count": 1}
+  {"type": "click",  "button": "left", "count": 1, "modifiers": "cmd+shift"}   (modifiers optional: held across the click)
   {"type": "drag",   "x": .., "y": .., "to_x": .., "to_y": .., "width": .., "height": .., "button": "left"}
   {"type": "scroll", "ticks": -3}
   {"type": "type",   "text": "hello\\n"}
@@ -68,6 +69,14 @@ def run_action(a):
     t = a.get("type")
     if t == "move":
         mouse.move(*_abs(a, "x", "y"))
+    elif t == "click" and a.get("modifiers"):   # cmd+click, shift+click ...: modifiers held across the click
+        kbd.hold(a["modifiers"])
+        time.sleep(0.05)
+        try:
+            mouse.click(a.get("button", "left"), int(a.get("count", 1)))
+            time.sleep(0.05)
+        finally:
+            kbd.release_all()
     elif t == "click":
         if "x" in a:
             mouse.move(*_abs(a, "x", "y"))

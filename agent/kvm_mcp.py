@@ -104,7 +104,7 @@ def survey() -> list:
 
 @mcp.tool(description="Manual mode (prefer `run`): the standard computer tool, one action on the computer. Only screenshot and zoom return an "
           "image: batch your actions and end the batch with a screenshot (the screen is allowed to settle first). action: left_click, double_click, triple_click, right_click, middle_click, "
-          "mouse_move, left_click_drag (start_coordinate = the pixel to press on, required; coordinate = release point; to resize by a corner handle drag it toward the object's centre to shrink, away to grow), type (text; a trailing newline presses "
+          "mouse_move, left_click_drag (start_coordinate = the pixel to press on, required; coordinate = release point), type (text; a trailing newline presses "
           "Enter), key (text = combo: cmd+l, Return, ctrl+shift+t, Escape), scroll (coordinate + scroll_direction + "
           "scroll_amount in ticks, ~13 per screenful), wait (duration seconds), zoom (region [x0,y0,x1,y1] shown "
           "enlarged), screenshot (optional scale 0.25-1 for a smaller image; coordinates stay full-size). coordinate = [x, y] pixels of the last screenshot. Batch several calls when you "
