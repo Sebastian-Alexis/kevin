@@ -273,6 +273,13 @@ def first_contact(kvm, vlm, log=print, usb_timeout=120, signal_timeout=45):
     mark("video_s")
     img = settled(kvm, timeout=4)   # ignore a stale frame from before the target (re)configured the display
     if img is not None and awaiting_choice(img):
+        # a Mac with its brightness at zero mirrors pure black too: tap brightness up (F2 on the Apple keyboard
+        # identity) before taking the black for the mirroring dialog, so Return is not pressed into a focused app
+        kvm.actions([{"type": "key", "combo": "f2"}, {"type": "wait", "ms": 60}] * 6)
+        img = settled(kvm, timeout=2) or img
+        if not awaiting_choice(img):
+            log("display was dark (brightness), raised it")
+    if img is not None and awaiting_choice(img):
         # macOS shows "What do you want to show on ai-kvm?" with Entire Screen / Start Mirroring as the default
         log("display waiting for a choice: pressing Return (Entire Screen / Start Mirroring)")
         kvm.actions([{"type": "key", "combo": "enter"}])
