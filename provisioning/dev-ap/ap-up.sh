@@ -13,6 +13,7 @@ mkdir -p "$RUN"
 
 cleanup() {
   kill "$(cat "$RUN/dnsmasq.pid" 2>/dev/null)" 2>/dev/null || true
+  iptables -D INPUT -i "$IF" -j ACCEPT 2>/dev/null || true
   iptables -t nat -D POSTROUTING -s $NET.0/24 -o "$UPLINK" -j MASQUERADE 2>/dev/null || true
   iptables -D FORWARD -i "$IF" -o "$UPLINK" -j ACCEPT 2>/dev/null || true
   iptables -D FORWARD -i "$UPLINK" -o "$IF" -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
@@ -36,8 +37,8 @@ country_code=US
 ieee80211d=1
 hw_mode=g
 channel=6
-ieee80211n=1
-wmm_enabled=1
+ieee80211n=0
+wmm_enabled=0
 auth_algs=1
 wpa=2
 wpa_key_mgmt=WPA-PSK
@@ -50,6 +51,7 @@ sysctl -qw net.ipv4.ip_forward=1
 iptables -t nat -A POSTROUTING -s $NET.0/24 -o "$UPLINK" -j MASQUERADE
 iptables -I FORWARD -i "$IF" -o "$UPLINK" -j ACCEPT
 iptables -I FORWARD -i "$UPLINK" -o "$IF" -m state --state RELATED,ESTABLISHED -j ACCEPT
+iptables -I INPUT -i "$IF" -j ACCEPT
 
 dnsmasq --interface="$IF" --bind-interfaces --except-interface=lo --port=0 \
   --dhcp-range=$NET.10,$NET.254,12h --dhcp-option=6,1.1.1.1,8.8.8.8 \
