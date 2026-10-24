@@ -39,6 +39,8 @@ clients finish auth on this driver, so run hostapd + dnsmasq directly (NAT out o
 
     sudo dev-ap/ap-up.sh <wlx...> <psk-file>      # foreground; Ctrl-C tears down; leases in /run/ai-kvm-ap/leases
 
-macOS targets: run `swift host/macos/kvm-mirror.swift` on the Mac once while the KVM display is connected.
-It makes the capture display mirror the built-in panel (which keeps its own HiDPI resolution) instead of
-macOS dropping the panel to the capture's 1280x720; macOS saves the arrangement and reapplies it on reconnect.
+macOS targets: the bridge presents a single-block (DVI) monitor EDID, `pi/video/edid.hex`. With a CEA-861
+extension block macOS classifies the display as a TV and auto-mirrors to it, dropping the Mac's panel to 720p.
+As a plain monitor, a new Mac leaves its panel alone and the KVM screen shows "Choose to Mirror or Extend
+Display" until the user picks once. `host/macos/kvm-mirror.swift` sets mirroring with the built-in panel as
+master at its native HiDPI resolution, so the capture shows the Mac's real screen scaled into 1280x720.

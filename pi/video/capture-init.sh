@@ -1,6 +1,8 @@
 #!/bin/sh
 # Program the TC358743 HDMI->CSI bridge: push an EDID so the host sees a 720p60-preferred monitor (2-lane CSI limit),
-# then latch whatever timings the host actually sends.
+# then latch whatever timings the host actually sends. edid.hex is a single-block (DVI) monitor EDID on purpose:
+# with a CEA-861 extension macOS classifies the display as a TV and auto-mirrors to it, dropping the Mac's own
+# panel to 720p; as a plain monitor macOS leaves the panel alone and lets the user pick mirror or extend.
 set -eu
 DEV=${1:-/dev/video0}
 for _ in $(seq 1 30); do [ -e "$DEV" ] && break; sleep 1; done
