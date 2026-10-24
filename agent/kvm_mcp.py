@@ -22,7 +22,7 @@ from mcp.types import ImageContent, TextContent
 
 from .cu import SYSTEM, Session
 from .kvm import KVM, content_rect
-from .memory import learn, notes_text, recall
+from .memory import computer_id, learn, notes_text, recall, state_computer
 from .run import latest, survey as survey_frame
 from .vlm import VLM, load_key
 
@@ -30,7 +30,7 @@ from .vlm import VLM, load_key
 # stateless: no per-client session ids, so a server restart (deploy) never strands a connected app with
 # "Session not found"; the run state lives in the Session, keyed by begin()
 MEMORY = os.environ.get("AIKVM_MEMORY", "http://10.42.0.1:8020")   # agent.memory on the controller ('' disables)
-COMPUTER = os.environ.get("AIKVM_COMPUTER", "mac")
+COMPUTER = os.environ.get("AIKVM_COMPUTER", "auto")   # 'auto': fingerprint of the screen (see memory.computer_id)
 
 mcp = FastMCP("ai-kvm", stateless_http=True,
               transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
@@ -44,6 +44,7 @@ def cu():
         gate = VLM(os.environ.get("AIKVM_LLM_BASE", "http://10.42.0.1:8000/v1"), os.environ.get("AIKVM_LLM_MODEL", "qwen27"), key=key)
         _cu = Session(KVM(os.environ.get("AIKVM_URL", "http://127.0.0.1:8080")), "", "", None,
                       os.environ.get("AIKVM_OS", "macOS"), save_dir=None, log=lambda *a: None, gate=gate)
+        _cu.trace = lambda inp: record({"computer": inp})
     return _cu
 
 
@@ -76,7 +77,8 @@ def begin(task: str) -> list:
     c.frame = None
     ov = frame.crop(content_rect(frame))
     record({"begin": len(task), "size": list(img.size)})   # the task text may carry credentials: not persisted
-    c.notes = recall(MEMORY, task, COMPUTER) if MEMORY else []
+    c.computer = (state_computer(base=MEMORY) or computer_id(img, c.gate, c.os_name)) if COMPUTER == "auto" else COMPUTER
+    c.notes = recall(MEMORY, task, c.computer) if MEMORY else []
     c.trajectory = []
     text = (f"run {run_id} started. {SYSTEM.format(os=c.os_name)}\n\n" + (notes_text(c.notes) + "\n\n" if c.notes else "")
             + f"First image: the screen ({img.size[0]}x{img.size[1]}); second image: the overview of every open window "
@@ -102,7 +104,7 @@ def survey() -> list:
 
 @mcp.tool(description="Manual mode (prefer `run`): the standard computer tool, one action on the computer. Only screenshot and zoom return an "
           "image: batch your actions and end the batch with a screenshot (the screen is allowed to settle first). action: left_click, double_click, triple_click, right_click, middle_click, "
-          "mouse_move, left_click_drag (start_coordinate -> coordinate), type (text; a trailing newline presses "
+          "mouse_move, left_click_drag (start_coordinate = the pixel to press on, required; coordinate = release point; to resize by a corner handle drag it toward the object's centre to shrink, away to grow), type (text; a trailing newline presses "
           "Enter), key (text = combo: cmd+l, Return, ctrl+shift+t, Escape), scroll (coordinate + scroll_direction + "
           "scroll_amount in ticks, ~13 per screenful), wait (duration seconds), zoom (region [x0,y0,x1,y1] shown "
           "enlarged), screenshot (optional scale 0.25-1 for a smaller image; coordinates stay full-size). coordinate = [x, y] pixels of the last screenshot. Batch several calls when you "
@@ -145,7 +147,7 @@ async def run(task: str, ctx: Context, max_turns: int = 30) -> list:
     run_id = time.strftime("%Y%m%d-%H%M%S")
     c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
     os.makedirs(c.save_dir, exist_ok=True)
-    c.base, c.model, c.memory, c.computer = PLANNER_BASE, PLANNER_MODEL, MEMORY, COMPUTER
+    c.base, c.model, c.memory, c.computer = PLANNER_BASE, PLANNER_MODEL, MEMORY, COMPUTER   # 'auto': re-fingerprinted per run
     c.key = load_key(os.environ.get("AIKVM_PLANNER_KEY_FILE", "/etc/ai-kvm/gateway-key"))
     steps = []
     loop = asyncio.get_running_loop()
@@ -185,7 +187,7 @@ async def run_http(request):
     run_id = time.strftime("%Y%m%d-%H%M%S")
     c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
     os.makedirs(c.save_dir, exist_ok=True)
-    c.base, c.model, c.memory, c.computer = PLANNER_BASE, PLANNER_MODEL, MEMORY, COMPUTER
+    c.base, c.model, c.memory, c.computer = PLANNER_BASE, PLANNER_MODEL, MEMORY, COMPUTER   # 'auto': re-fingerprinted per run
     c.key = load_key(os.environ.get("AIKVM_PLANNER_KEY_FILE", "/etc/ai-kvm/gateway-key"))
     steps, queue = [], asyncio.Queue()
     loop = asyncio.get_running_loop()

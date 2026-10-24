@@ -106,7 +106,7 @@ def main(argv=None):
             report["setup_s"] = round(time.monotonic() - t0, 1)
             log(f"first contact: {json.dumps(report)}")
             state = {"status": "ready" if report.get("ok") else "needs attention", "since": time.time(),
-                     "kvm": url, "report": report}
+                     "kvm": url, "computer": report.get("computer"), "report": report}
             write_state(a.state, state)
             # failures that clicked around the target's UI get one retry; click-free ones (waiting for USB,
             # video, or a locked Mac to show the dialog) keep retrying

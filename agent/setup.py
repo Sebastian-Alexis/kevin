@@ -316,6 +316,13 @@ def first_contact(kvm, vlm, log=print, usb_timeout=120, signal_timeout=45):
         return report
     rect = content_rect(img)
     report["screen"] = [rect[2] - rect[0], rect[3] - rect[1]]
+    # the machine's identity for memory: read once here, at the one moment the screen is known to be its own
+    # (fresh mirror, before any task): the login screen, menu bar account or a Finder sidebar names the user
+    from .memory import computer_id, mac_account_name
+    from .run import latest
+    name = mac_account_name(kvm, vlm, latest)   # Apple menu "Log Out <Name>...": deterministic on a logged-in Mac
+    report["computer"] = f"mac-{name}" if name else computer_id(img.crop(rect), vlm, "macOS")
+    log(f"  computer: {report['computer']}")
     report["pointer_error"] = pointer_error(kvm)
     mark("total_s")
     if report["pointer_error"] is None or report["pointer_error"] > 25:

@@ -21,7 +21,7 @@ import time
 import urllib.request
 
 from .kvm import KVM, PLACEHOLDER_SIZE, content_rect
-from .memory import learn, notes_text, recall
+from .memory import computer_id, learn, notes_text, recall, state_computer
 from .run import latest, typed_where_wanted
 from .vlm import VLM, load_key
 
@@ -44,7 +44,7 @@ TOOL = {"name": "computer", "input_schema": {
                                                "cursor_position", "scroll", "wait", "zoom", "left_mouse_down",
                                                "left_mouse_up"]},
         "coordinate": {"type": "array", "items": {"type": "integer"}, "description": "[x, y] pixels of the screenshot"},
-        "start_coordinate": {"type": "array", "items": {"type": "integer"}, "description": "left_click_drag: where to press (default: the current pointer position)"},
+        "start_coordinate": {"type": "array", "items": {"type": "integer"}, "description": "left_click_drag: the exact pixel to press on (required), e.g. a resize handle; coordinate is where it is released. To scale an object by its corner handle, drag the handle toward the object's centre to shrink (both axes), away from it to grow"},
         "text": {"type": "string", "description": "type: the text; key: the key combo, e.g. cmd+l, Return, ctrl+shift+t"},
         "scroll_direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
         "scroll_amount": {"type": "integer", "description": "scroll: number of wheel ticks (1 tick ~ 55 px; a screenful ~13)"},
@@ -74,6 +74,7 @@ class Session:
         self.gate, self.task, self.typed = gate, task, None   # gate: VLM judging where typed text landed before Enter
         self.stop = False        # set by a caller to abort the loop between turns (and before each batch)
         self.pointer = None      # last pointer position as a screenshot fraction (drags start from here)
+        self.trace = None        # optional callback given every action before it is sent (the MCP server logs them)
         self.launcher = False    # the OS launcher (Spotlight/Raycast) was just opened: typing and Return need its pace
         self.after_key = False   # the last action was a key combo: a UI it opened needs to settle before text is typed
         self.frame = None        # the frame the last batch settled on
@@ -120,6 +121,8 @@ class Session:
     def do(self, inp):
         """One computer-tool call -> KVM actions. Returns (text, image_block or None)."""
         a = inp.get("action")
+        if self.trace:
+            self.trace({**inp, "text": f"<redacted: {len(str(inp.get('text', '')))} chars>"} if a == "type" else inp)
         if a in ("left_click", "right_click", "middle_click", "double_click", "triple_click", "mouse_move"):
             fx, fy = self.frac(inp.get("coordinate"))
             self.pointer = (fx, fy)
@@ -134,12 +137,10 @@ class Session:
         elif a == "left_click_drag":
             # the trained convention: press at start_coordinate if given, else where the pointer is, drag to coordinate
             ex, ey = self.frac(inp.get("coordinate"))
-            if inp.get("start_coordinate"):
-                sx, sy = self.frac(inp["start_coordinate"])
-            elif self.pointer:
-                sx, sy = self.pointer
-            else:
-                raise ValueError("left_click_drag needs start_coordinate (the pointer position is unknown)")
+            if not inp.get("start_coordinate"):
+                raise ValueError("left_click_drag needs start_coordinate: the exact pixel to press on (e.g. the resize "
+                                 "handle), and coordinate: where to release it")
+            sx, sy = self.frac(inp["start_coordinate"])
             if (sx, sy) == (ex, ey):
                 raise ValueError("drag start and end are the same point; give start_coordinate")
             self.kvm.actions([{"type": "drag", "x": sx, "y": sy, "to_x": ex, "to_y": ey, "button": "left"}])
@@ -287,11 +288,17 @@ class Session:
     # --- loop -------------------------------------------------------------------------------------------------
     def run(self, task, max_turns=40, settle_max=2.0):
         self.task, self.typed = task, None
+        img0 = self.screen(fresh=True)
+        if self.computer in (None, "", "auto", "mac"):
+            # the daemon's first contact identifies the machine (its login/mirroring screen names the user); else the
+            # local model reads a name off the screen; an unidentified machine recalls nothing and learns under 'unknown'
+            self.computer = state_computer(base=self.memory) or (computer_id(img0, self.gate, self.os_name) if self.gate else "unknown")
+            self.log(f"computer: {self.computer}")
         notes = recall(self.memory, task, self.computer) if self.memory else []
         if notes:
             self.log(f"memory: {len(notes)} note(s) recalled: " + " | ".join(n["text"][:70] for n in notes))
         trajectory = []
-        img = self.screen(fresh=True)
+        img = img0
         prompt = task + ("\n\n" + notes_text(notes) if notes else "")
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}, self.shot_block(img)]}]
         result = {"done": False, "fail": "max turns reached", "turns": max_turns}
@@ -360,7 +367,7 @@ def main(argv=None):
     p.add_argument("--max-turns", type=int, default=40)
     p.add_argument("--save-dir", default=None)
     p.add_argument("--memory", default=os.environ.get("AIKVM_MEMORY", "http://127.0.0.1:8020"), help="agent.memory service ('' disables)")
-    p.add_argument("--computer", default=os.environ.get("AIKVM_COMPUTER", "mac"), help="name of the computer under control, for memory")
+    p.add_argument("--computer", default=os.environ.get("AIKVM_COMPUTER", "auto"), help="memory key of the computer under control ('auto': fingerprint of its screen)")
     a = p.parse_args(argv)
     gate = VLM(a.gate, "qwen27", key=load_key(a.gate_key_file)) if a.gate else None
     s = Session(KVM(a.kvm), a.llm, a.model, load_key(a.key_file) if a.key_file else None, a.os_name, a.save_dir, gate=gate,

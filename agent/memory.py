@@ -56,6 +56,8 @@ class Memory:
 
     async def recall(self, task, computer, k=5, min_score=0.25):
         from moss import QueryOptions
+        if not computer or computer.endswith("unknown"):   # an unidentified machine recalls nothing: no cross-machine notes
+            return []
         hits = await self.session.query(task, QueryOptions(top_k=k, alpha=0.6, filter={"$and": [
             {"field": "outcome", "condition": {"$eq": "success"}},
             {"field": "suspect", "condition": {"$eq": "no"}},
@@ -65,6 +67,8 @@ class Memory:
     async def learn(self, task, computer, outcome, trajectory, recalled=()):
         from moss import DocumentInfo
         learned, quarantined = [], []
+        if not computer or computer.endswith("unknown"):   # nothing is stored under a shared 'unknown' bucket either
+            return {"learned": [], "quarantined": []}
         async with self.lock:
             if outcome == "success":
                 reply = self.ask(LESSONS.format(computer=computer, verdict="completed it", task=task, trajectory=trajectory[:6000]))
@@ -110,6 +114,68 @@ def parse(text):
         return {}
 
 
+def state_computer(path=None, base=None):
+    """The computer id the plug-and-play daemon recorded at first contact (the login/mirroring screen names the
+    user), if any: from the state file on this box, else from the memory service (for the KVM)."""
+    path = path or os.environ.get("AIKVM_STATE", "/run/ai-kvm/state.json")
+    try:
+        with open(path) as f:
+            st = json.load(f)
+        return st.get("computer") or (st.get("report") or {}).get("computer")
+    except (OSError, ValueError):
+        pass
+    if base:
+        try:
+            req = urllib.request.Request(base.rstrip("/") + "/computer", b"{}", {"content-type": "application/json"})
+            with urllib.request.urlopen(req, timeout=3) as r:
+                return json.load(r).get("computer")
+        except Exception:
+            return None
+    return None
+
+
+ID_SCHEMA = {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"], "additionalProperties": False}
+
+
+NAME_SCHEMA = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False}
+
+
+def mac_account_name(kvm, vlm, latest):
+    """Deterministic identity on a logged-in Mac: the Apple menu's "Log Out <Name>..." item names the user. Opens
+    the menu (ctrl+F2 focuses the menu bar, Return opens the Apple menu), reads it, closes it with Esc."""
+    kvm.actions([{"type": "key", "combo": "ctrl+f2"}, {"type": "wait", "ms": 300}, {"type": "key", "combo": "enter"}, {"type": "wait", "ms": 400}])
+    img = latest(kvm, timeout=1.5, interval=0.0, tolerance=2.0, first_delay=0.1)
+    kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 150}, {"type": "key", "combo": "esc"}])
+    w, h = img.size
+    crop = img.crop((0, 0, int(w * 0.35), int(h * 0.75)))
+    try:
+        text, _, _ = vlm.chat([{"role": "user", "content": [vlm.image_part(crop), {"type": "text", "text": (
+            'An Apple menu may be open. Find the item "Log Out <name>..." and reply JSON {"name": "<the name>"} '
+            '(empty if no such item is visible).')}]}], 40, NAME_SCHEMA)
+        name = "".join(ch for ch in str(parse(text).get("name", "")).lower() if ch.isalnum() or ch == "-")[:32]
+    except Exception:
+        name = ""
+    return name
+
+
+def computer_id(img, vlm, os_name="macOS"):
+    """A stable, zero-install identity for the computer under control, read off its screen by the local model: the
+    user/computer name macOS shows (menu bar account, login screen, a Finder sidebar, a terminal prompt), else a
+    short description of the machine. Pixel fingerprints were tried and change with the front window and the clock;
+    a name does not. Falls back to the panel aspect class when nothing identifying is visible."""
+    w, h = img.size
+    aspect = round(w / h * 8) / 8
+    try:
+        text, _, _ = vlm.chat([{"role": "user", "content": [vlm.image_part(img), {"type": "text", "text": (
+            "Identify this computer for a memory key. Look for a user name, account name, computer name or hostname "
+            "visible anywhere (login screen, menu bar, Finder sidebar, terminal prompt, window titles). Reply JSON "
+            '{"id": "<lowercase name, letters/digits/dashes only, or empty if none is visible>"}')}]}], 40, ID_SCHEMA)
+        name = "".join(ch for ch in str(parse(text).get("id", "")).lower() if ch.isalnum() or ch == "-")[:32]
+    except Exception:
+        name = ""
+    return f"{os_name[:3].lower()}-{aspect:g}-{name or 'unknown'}"
+
+
 # ---- client side (cu.py, droid.py, the Pi's MCP server): plain HTTP, no Moss SDK needed -------------------------
 def recall(base, task, computer, timeout=5):
     try:
@@ -144,7 +210,9 @@ def serve(binds, memory, loop):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
             try:
-                if self.path == "/recall":
+                if self.path == "/computer":   # the id recorded at first contact, for clients off this box (the KVM)
+                    out = {"computer": state_computer()}
+                elif self.path == "/recall":
                     out = {"notes": asyncio.run_coroutine_threadsafe(memory.recall(body["task"], body.get("computer", "any")), loop).result(10)}
                 elif self.path == "/learn":
                     out = asyncio.run_coroutine_threadsafe(memory.learn(body["task"], body.get("computer", "any"), body.get("outcome", "failure"),
