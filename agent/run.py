@@ -477,19 +477,23 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                                 off.append(f"{spec.get('target', '?')} @{x:.0f},{y:.0f}")
                             if coords != "norm":
                                 spec["point_2d"] = [round(x * 1000 / sw), round(y * 1000 / sh)]   # ints: stable repeat check
-                if off:
-                    # clamping would click the screen edge and waste the turn (and the model's guess count)
-                    history.append(f"saw: {str(decision.get('observe', ''))[:80]} | REJECTED, off-screen point(s) "
-                                   f"{off}: the picture is {sw}x{sh}, give coordinates inside it")
-                    log(f"step {step}: model {t_plan:.2f}s rejected off-screen points {off}")
-                    continue
                 observe = str(decision.get("observe", ""))[:120]
                 summary = json.dumps(actions, separators=(",", ":"))
-                repeated = actions and batches[-2:] == [summary, summary]
-                batches.append(summary)   # rejected batches count too: the model can loop on one it is refused
+                # repeat key: verbs + targets + coordinates to the nearest 20 units, so a re-aimed click on the same
+                # thing (339,575 vs 339,576) still counts as the same batch; rejected batches count too
+                key = json.dumps([{k: (v if not isinstance(v, dict) else {"t": v.get("target"), "p": [round(c / 20) for c in v.get("point_2d", [])]})
+                                   for k, v in a.items()} for a in actions], separators=(",", ":"))
+                repeated = actions and batches[-2:] == [key, key]
+                batches.append(key)
                 if repeated:
                     log(f"step {step}: model {t_plan:.2f}s stopping, same batch three times -> {summary}")
                     return {"done": False, "fail": "stuck repeating the same actions", "steps": step}
+                if off:
+                    # clamping would click the screen edge and waste the turn (and the model's guess count)
+                    history.append(f"saw: {observe} | REJECTED, off-screen point(s) {off}: the picture is {sw}x{sh}, "
+                                   "give coordinates inside it")
+                    log(f"step {step}: model {t_plan:.2f}s rejected off-screen points {off}")
+                    continue
                 if unfocused_keys(actions, focused, primed):
                     history.append(f"saw: {observe} | REJECTED, nothing was typed: no text field has focus. Begin the "
                                    "batch with the shortcut that focuses the input (e.g. cmd+t, cmd+l) or a click on "
