@@ -445,7 +445,7 @@ def ground(grounder, screen, target):
 
 
 def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=False, save_dir=None, log=print,
-        coords="norm", app=None, grounder=None):
+        coords="norm", app=None, grounder=None, restore=False):
     """Drive the computer until the model reports the task done or impossible. An app the task names is brought
     to the front before the first look (on macOS with the other apps hidden until the run ends)."""
     history, batches, frame = [], [], None
@@ -499,7 +499,10 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                 if grounder:
                     # all of a batch's targets at once: vLLM batches the requests, ~1.3 s total instead of per click
                     from concurrent.futures import ThreadPoolExecutor
-                    specs = [spec for a in actions for kind, spec in a.items() if kind in CLICKS or kind == "scroll"]
+                    specs = [spec for a in actions for kind, spec in a.items() if kind in CLICKS]
+                    for a in actions:   # a scroll just needs the pointer over the page: no grounding call
+                        if "scroll" in a and a["scroll"].get("point_2d") is None:
+                            a["scroll"]["point_2d"] = [500, 500]
                     t_g = time.monotonic()
                     with ThreadPoolExecutor(max(1, len(specs))) as ex:
                         for spec, pt in zip(specs, ex.map(lambda s: ground(grounder, screen, s["target"]), specs)):
@@ -591,7 +594,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                 return {"done": bool(decision.get("done")), "fail": decision.get("fail"), "steps": step}
         return {"done": False, "fail": "max steps reached", "steps": max_steps}
     finally:
-        if hidden:
+        if hidden and restore:
             t0 = time.monotonic()
             try:
                 shown = show_all(kvm, vlm) or show_all(kvm, vlm)   # the Help shortcut is occasionally swallowed
@@ -619,6 +622,7 @@ def main(argv=None):
     p.add_argument("--app", help="app to raise and isolate in (Hide Others) when the task text does not name one")
     p.add_argument("--grounder", default=None, help="grounding endpoint (e.g. http://127.0.0.1:8010/v1): the planner names targets, this model locates them")
     p.add_argument("--grounder-model", default="holo4")
+    p.add_argument("--show-all", action="store_true", help="at the end, bring back the apps Hide Others hid (off by default)")
     a = p.parse_args(argv)
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
@@ -629,7 +633,7 @@ def main(argv=None):
     if grounder:
         coords = "norm"   # Holo4 answers on the 0-1000 grid
     result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords,
-                 app=a.app, grounder=grounder)
+                 app=a.app, grounder=grounder, restore=a.show_all)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 
