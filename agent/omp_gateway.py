@@ -61,7 +61,8 @@ def fix_thinking(body):
     enabled/disabled/adaptive. Map anything else to adaptive so the request is not rejected."""
     th = body.get("thinking") if isinstance(body, dict) else None
     if isinstance(th, dict) and th.get("type") not in (None, "enabled", "disabled", "adaptive"):
-        body["thinking"] = {"type": "adaptive"}
+        sys.stderr.write(f"omp_gateway: thinking.type {th.get('type')!r} -> adaptive (not accepted upstream)\n")
+        body["thinking"] = {k: v for k, v in th.items() if k != "type"} | {"type": "adaptive"}
 
 
 def fix_images(body):
