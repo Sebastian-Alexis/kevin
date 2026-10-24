@@ -71,6 +71,7 @@ class Session:
         self.memory, self.computer = memory, computer   # memory: base URL of agent.memory (Moss playbook), or None
         self.save_dir, self.log, self.keep_images, self.max_side = save_dir, log, keep_images, max_side
         self.gate, self.task, self.typed = gate, task, None   # gate: VLM judging where typed text landed before Enter
+        self.stop = False        # set by a caller to abort the loop between turns (and before each batch)
         self.launcher = False    # the OS launcher (Spotlight/Raycast) was just opened: typing and Return need its pace
         self.after_key = False   # the last action was a key combo: a UI it opened needs to settle before text is typed
         self.frame = None        # the frame the last batch settled on
@@ -270,6 +271,8 @@ class Session:
         messages = [{"role": "user", "content": [{"type": "text", "text": prompt}, self.shot_block(img)]}]
         result = {"done": False, "fail": "max turns reached", "turns": max_turns}
         for turn in range(1, max_turns + 1):
+            if self.stop:
+                self.log("stopped by caller"); result = {"done": False, "fail": "stopped", "turns": turn - 1}; break
             t0 = time.monotonic()
             self.trim_images(messages)
             out = self.chat(messages)
@@ -287,6 +290,8 @@ class Session:
                 result = {"done": True, "text": text, "turns": turn}
                 break
             results, t1 = [], time.monotonic()
+            if self.stop:   # the model answered after a stop request: do not touch the computer
+                self.log("stopped by caller"); result = {"done": False, "fail": "stopped", "turns": turn}; break
             for i, c in enumerate(calls):
                 try:
                     note, image = self.do(c["input"])

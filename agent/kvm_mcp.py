@@ -154,6 +154,7 @@ async def run(task: str, ctx: Context, max_turns: int = 30) -> list:
         steps.append(msg)
         asyncio.run_coroutine_threadsafe(ctx.info(msg[:400]), loop)
     c.log = log
+    c.stop = False
     t0 = time.monotonic()
     record({"run": len(task)})
     try:
@@ -185,17 +186,46 @@ async def run_http(request):
     c.key = load_key(os.environ.get("AIKVM_PLANNER_KEY_FILE", "/etc/ai-kvm/gateway-key"))
     steps = []
     c.log = lambda m: steps.append(m[:300])
+    c.stop = False
     t0 = time.monotonic()
     record({"run": len(task)})
+    work = asyncio.ensure_future(asyncio.to_thread(c.run, task, int(body.get("max_turns", 30))))
+
+    async def watch_disconnect():   # the client (a cancelled Droid subagent's curl) going away stops the run
+        while not work.done():
+            if await request.is_disconnected():
+                c.stop = True
+                record({"stop": "client disconnected"})
+                return
+            await asyncio.sleep(0.5)
+    watcher = asyncio.ensure_future(watch_disconnect())
     try:
-        result = await asyncio.to_thread(c.run, task, int(body.get("max_turns", 30)))
+        result = await work
     except Exception as e:
         result = {"done": False, "fail": f"{type(e).__name__}: {e}"}
     finally:
+        watcher.cancel()
         c.log = lambda *a: None
     threading.Thread(target=c.remember, daemon=True).start()
     return JSONResponse({"done": bool(result.get("done")), "fail": result.get("fail"), "text": result.get("text", ""),
                          "turns": result.get("turns"), "seconds": round(time.monotonic() - t0, 1), "steps": steps})
+
+
+@mcp.custom_route("/stop", methods=["POST"])
+async def stop_http(request):
+    """Abort the current run (the loop stops before its next action)."""
+    from starlette.responses import JSONResponse
+    c = cu()
+    c.stop = True
+    record({"stop": "requested"})
+    return JSONResponse({"stopping": True})
+
+
+@mcp.tool(description="Stop the task currently running on the computer (the loop halts before its next action).")
+def stop() -> str:
+    cu().stop = True
+    record({"stop": "requested"})
+    return "stopping"
 
 
 @mcp.tool(description="End the run: outcome is 'success' or 'failure', summary one short paragraph of what was done "
