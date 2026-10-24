@@ -10,7 +10,7 @@ graph LR
   T["Target computer"] -- "USB-C: power + keyboard/mouse" --> P["Pi 4B (pi/)"]
   T -- "HDMI out" --> B["TC358743 bridge"] -- CSI --> P
   P -- "Wi-Fi: /health, /screenshot, /actions" --> C["Controller (agent/)"]
-  C -- "OpenAI-compatible API" --> M["Local VLM (vLLM, qwen122)"]
+  C -- "OpenAI-compatible API" --> M["Local VLM (vLLM, qwen27: Qwen3.8-27B)"]
 ```
 
 ## Plug and play

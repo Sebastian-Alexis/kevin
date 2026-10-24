@@ -245,7 +245,7 @@ def main(argv=None):
                    help="planner model, any omp selector")
     p.add_argument("--llm", default=os.environ.get("AIKVM_LLM_BASE", "http://127.0.0.1:8000/v1"),
                    help="OpenAI-compatible endpoint for grounding (local vLLM)")
-    p.add_argument("--ground-model", default=os.environ.get("AIKVM_LLM_MODEL", "qwen122"))
+    p.add_argument("--ground-model", default=os.environ.get("AIKVM_LLM_MODEL", "qwen27"))
     p.add_argument("--key-file", default=os.environ.get("AIKVM_LLM_KEY_FILE", "/etc/gemma4-vllm-api-key"))
     p.add_argument("--os", default="darwin", dest="platform", choices=["darwin", "linux", "windows"])
     p.add_argument("--max-steps", type=int, default=15)
