@@ -94,13 +94,15 @@ def export(a):
             else:
                 keep[r["split"]].append(r)
                 stats[f"kept ({r['source']}, {kind})"] += 1
-    for r in map(json.loads, open(OUT / "pool.jsonl")):   # human-verified sources go in without a teacher check
+    easy = {r["id"] for path in a.student or [] for r in map(json.loads, open(path)) if r["hit"]}
+    for r in map(json.loads, open(OUT / "pool.jsonl")):   # human-verified sources go in without a teacher check...
+        if a.student and r["id"] not in easy:   # ...unless the student misses them: those need the teacher's check
+            continue                            # (short labels like 'file' are often ambiguous on the screen)
         if r["source"] in a.trust and r["id"] not in seen and not ground.junk(r["target"]):
             seen.add(r["id"])
             keep[r["split"]].append(r)
             stats[f"kept ({r['source']}, trusted)"] += 1
     if a.student:   # difficulty: the student's misses all stay, its hits only as a replay share (GUI-G1, InfiGUI-G1)
-        easy = {r["id"] for path in a.student for r in map(json.loads, open(path)) if r["hit"]}
         rng = random.Random(3)
         before = len(keep["train"])
         keep["train"] = [r for r in keep["train"] if r["id"] not in easy or rng.random() < a.replay]
