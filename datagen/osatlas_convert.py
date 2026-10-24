@@ -66,6 +66,9 @@ def main():
     ap.add_argument("--cache", default=str(DATA / "_cache" / "osatlas"))
     args = ap.parse_args()
 
+    out_dir = DATA / "osatlas" / f"{args.os}-seed{args.seed}"
+    if out_dir.exists():
+        sys.exit(f"{out_dir} already exists: delete it or use another --seed")
     rng = random.Random(args.seed)
     ann = load_annotations(args.os, Path(args.cache))
     rng.shuffle(ann)
