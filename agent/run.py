@@ -477,6 +477,9 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                                 off.append(f"{spec.get('target', '?')} @{x:.0f},{y:.0f}")
                             if coords != "norm":
                                 spec["point_2d"] = [round(x * 1000 / sw), round(y * 1000 / sh)]   # ints: stable repeat check
+                    if "scroll" in a and mac:
+                        # macOS "natural scrolling" (default) inverts the wheel: +ticks moves the page down
+                        a["scroll"]["ticks"] = -int(a["scroll"].get("ticks", -3))
                 observe = str(decision.get("observe", ""))[:120]
                 summary = json.dumps(actions, separators=(",", ":"))
                 # repeat key: verbs + targets + coordinates to the nearest 20 units, so a re-aimed click on the same
