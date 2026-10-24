@@ -334,7 +334,8 @@ def task_app(vlm, task):
         'Which application does this computer-use task name? Reply only JSON with the app name as the task gives it.\n'
         'Examples: "In the Helium web browser, open a new tab" -> {"app": "Helium"}; "In System Settings, turn on '
         'Dark Mode" -> {"app": "System Settings"}; "Reply to Bob in Slack" -> {"app": "Slack"}; "Search the web for '
-        'the weather" -> {"app": null}; "Close the dialog on screen" -> {"app": null}.\n'
+        'the weather" -> {"app": null}; "Close the dialog on screen" -> {"app": null}; a kind of app rather than a '
+        'name ("In the web browser, ...", "In a terminal, ...") -> {"app": null}: the one already open will be used.\n'
         f'Task: "{task}"')}], 30, APP_SCHEMA)
     app = parse(text).get("app")
     return app.strip() if isinstance(app, str) and app.strip() else None
@@ -671,6 +672,8 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                 return {"done": bool(decision.get("done")), "fail": decision.get("fail"), "steps": step}
         return {"done": False, "fail": "max steps reached", "steps": max_steps}
     finally:
+        if overview and not dry_run:   # never leave the computer sitting in its window overview
+            kvm.actions([{"type": "key", "combo": "esc"}])
         if hidden and restore:
             t0 = time.monotonic()
             try:

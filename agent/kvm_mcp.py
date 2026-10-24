@@ -65,6 +65,8 @@ def begin(task: str) -> list:
     """Start a run for `task` (call once first): resets the step counter and keyboard-focus tracking, opens a run
     folder for the frames and the event log, and returns the run id with the current screenshot."""
     ex = executor()
+    if ex.overview:   # a previous run ended in the window overview
+        ex.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 300}])
     run_id = time.strftime("%Y%m%d-%H%M%S")
     ex.task, ex.n, ex.focused, ex.primed, ex.frame, ex.overview = task, 0, False, False, None, False
     ex.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
