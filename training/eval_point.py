@@ -25,14 +25,21 @@ from common import DATA  # noqa: E402
 from shared import ground  # noqa: E402
 
 
+OWL_SYSTEM = (ROOT / "shared" / "gui_owl_grounding_system.txt").read_text()
+
+
 def ask(a, r):
     b64 = base64.b64encode((DATA / r["image"]).read_bytes()).decode()
-    body = {"model": a.model, "max_tokens": 32, "temperature": 0,
-            "response_format": {"type": "json_schema", "json_schema": {"name": "point", "schema": ground.SCHEMA}},
-            "chat_template_kwargs": {"enable_thinking": False},
-            "messages": [{"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                {"type": "text", "text": ground.PROMPT.format(target=r["target"])}]}]}
+    img = {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+    if a.native_owl:   # GUI-Owl's own grounding prompt (X-PLUG eval_grounding_benchmarks.py): tool call, last [x, y] wins
+        body = {"model": a.model, "max_tokens": 96, "temperature": 0,
+                "messages": [{"role": "system", "content": OWL_SYSTEM},
+                             {"role": "user", "content": [img, {"type": "text", "text": r["target"]}]}]}
+    else:
+        body = {"model": a.model, "max_tokens": 32, "temperature": 0,
+                "response_format": {"type": "json_schema", "json_schema": {"name": "point", "schema": ground.SCHEMA}},
+                "chat_template_kwargs": {"enable_thinking": False},
+                "messages": [{"role": "user", "content": [img, {"type": "text", "text": ground.PROMPT.format(target=r["target"])}]}]}
     req = urllib.request.Request(f"{a.url}/chat/completions", json.dumps(body).encode(), {"Content-Type": "application/json"})
     t0 = time.monotonic()
     try:
@@ -42,7 +49,7 @@ def ask(a, r):
     except Exception as e:   # one failed request is a miss, not the end of the run
         text, toks = f"ERROR {e}", {}
     ms = (time.monotonic() - t0) * 1000
-    pt = ground.parse(text)
+    pt = ground.parse_last(text) if a.native_owl else ground.parse(text)
     return {**r, "reply": text, "pred": pt, "hit": ground.inside(pt, r["bbox"]), "ms": ms,
             "prompt_tokens": toks.get("prompt_tokens"), "completion_tokens": toks.get("completion_tokens")}
 
@@ -56,6 +63,7 @@ def main():
     ap.add_argument("-c", "--concurrency", type=int, default=16)
     ap.add_argument("--limit", type=int)
     ap.add_argument("--out")
+    ap.add_argument("--native-owl", action="store_true", help="GUI-Owl's published grounding prompt instead of shared/ground.py")
     a = ap.parse_args()
     rows = [json.loads(line) for line in open(DATA / "grounding" / f"{a.data}.jsonl")]
     if a.split:

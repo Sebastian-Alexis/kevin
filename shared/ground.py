@@ -46,6 +46,12 @@ def parse(text):
     return (float(m.group(1)), float(m.group(2))) if m else None
 
 
+def parse_last(text):
+    """Last [x, y] in a reply (GUI-Owl's tool call: {"coordinate": [x, y]})."""
+    pairs = re.findall(r"\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]", text or "")
+    return (float(pairs[-1][0]), float(pairs[-1][1])) if pairs else None
+
+
 def inside(pt, bbox, margin=0):
     l, t, r, b = bbox
     return pt is not None and l - margin <= pt[0] <= r + margin and t - margin <= pt[1] <= b + margin

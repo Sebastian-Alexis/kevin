@@ -37,7 +37,7 @@ report_to: none
 ### train  (H200 141GB)
 per_device_train_batch_size: 16
 gradient_accumulation_steps: 2
-learning_rate: 1.0e-4
+learning_rate: 5.0e-5              # gentler than run 1 (web regressed); 1 epoch
 num_train_epochs: 1.0
 lr_scheduler_type: cosine
 warmup_ratio: 0.05

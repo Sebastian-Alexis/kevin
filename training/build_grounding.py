@@ -16,6 +16,8 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from PIL import Image
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "datagen"))
 sys.path.insert(0, str(ROOT))
@@ -97,6 +99,25 @@ def export(a):
             seen.add(r["id"])
             keep[r["split"]].append(r)
             stats[f"kept ({r['source']}, trusted)"] += 1
+    if a.student:   # difficulty: the student's misses all stay, its hits only as a replay share (GUI-G1, InfiGUI-G1)
+        easy = {r["id"] for path in a.student for r in map(json.loads, open(path)) if r["hit"]}
+        rng = random.Random(3)
+        before = len(keep["train"])
+        keep["train"] = [r for r in keep["train"] if r["id"] not in easy or rng.random() < a.replay]
+        stats["student-easy dropped"] = before - len(keep["train"])
+    if a.resize_frac:   # random downscale copies (Phi-Ground: random resize helps); boxes are relative, so unchanged
+        rng, rdir = random.Random(4), OUT / "resized"
+        rdir.mkdir(exist_ok=True)
+        extra = []
+        for r in rng.sample(keep["train"], int(len(keep["train"]) * a.resize_frac)):
+            dst = rdir / (hashlib.md5((r["image"] + r["id"]).encode()).hexdigest()[:16] + ".jpg")
+            if not dst.exists():
+                img = Image.open(DATA / r["image"])
+                k = rng.uniform(0.5, 0.9)
+                img.resize((max(28, round(img.width * k)), max(28, round(img.height * k))), Image.LANCZOS).save(dst, quality=88)
+            extra.append({**r, "id": r["id"] + "#r", "image": dst.relative_to(DATA).as_posix()})
+        keep["train"] += extra
+        stats["resized copies"] = len(extra)
     random.Random(0).shuffle(keep["train"])
     files = {"ground_train": keep["train"], "ground_val": keep["val"]}
     exp = DATA / "export"
@@ -125,6 +146,9 @@ def main():
     sp.add_argument("--name", default="describe_in")
     e = sub.add_parser("export")
     e.add_argument("--teacher", nargs="+", required=True, help="eval_point.py --out files from the teacher")
+    e.add_argument("--student", nargs="*", help="eval_point.py --out files from the base student (difficulty)")
+    e.add_argument("--replay", type=float, default=0.35, help="share of student-easy rows kept")
+    e.add_argument("--resize-frac", type=float, default=0.0, help="extra randomly downscaled copies, as a share of train")
     e.add_argument("--trust", nargs="*", default=[], help="sources taken from the pool without a teacher check")
     a = ap.parse_args()
     {"pool": pool, "sample": sample, "export": export}[a.cmd](a)
