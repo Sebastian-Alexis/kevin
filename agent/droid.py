@@ -23,7 +23,7 @@ import time
 
 from droid_sdk import (AssistantMessage, HttpMcpServerConfig, InteractionHandlers, Session, SessionConfig,
                        ToolCall, ToolConfirmationOutcome, ToolResult)
-from droid_sdk.permissions import McpToolAction
+from droid_sdk.permissions import ApplyPatchAction, CreateFile, EditAction, ExecuteAction, McpToolAction
 
 SYSTEM = ("You operate a computer through the ai-kvm tools only. Call begin(task) first; then look at the screenshot "
           "and act in batches, each with a precise `expect` so the KVM can verify it locally; use look whenever you "
@@ -91,8 +91,8 @@ async def run_task(task, mcp_url, model, report, log=print):
         def allowed(a):
             if isinstance(a, McpToolAction):
                 return a.server_name == "ai-kvm"
-            name = getattr(getattr(a, "tool_use", None), "name", "")
-            return name in WRAPPERS
+            # the SDK has no action class for Droid's wrappers (ToolSearch, Script): deny by what touches this machine
+            return not isinstance(a, (ExecuteAction, EditAction, CreateFile, ApplyPatchAction))
         ok = bool(acts) and all(allowed(a) for a in acts)
         report.event("permission", actions=[f"{type(a).__name__}:{getattr(getattr(a, 'tool_use', None), 'name', '')}"
                                            for a in acts], allowed=ok)

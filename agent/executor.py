@@ -64,7 +64,7 @@ class Executor:
             parsed = split_actions(actions)
             for a in parsed:
                 for kind, spec in a.items():
-                    if kind in CLICKS and spec.get("point_2d") is not None:
+                    if isinstance(spec, dict) and spec.get("point_2d") is not None:
                         spec["pixels"] = True   # points the planner wrote itself are pixels of the screenshot it saw
                 if "scroll" in a and a["scroll"].get("point_2d") is None:
                     a["scroll"]["point_2d"] = [500, 500]   # a scroll just needs the pointer over the page
