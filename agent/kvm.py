@@ -35,28 +35,25 @@ class KVM:
 
 
 def content_rect(img):
-    """(x0, y0, x1, y1) of the non-black picture inside the capture frame."""
+    """(x0, y0, x1, y1) of the target's screen inside the capture frame.
+
+    Only symmetric left/right black bars are trimmed: that is how a 16:10 Mac panel sits in the 16:9 frame when
+    the Mac mirrors to the KVM. Top/bottom rows are never trimmed (a dark menu bar or Dock is part of the screen)
+    and lopsided dark columns are an app, not a pillarbox."""
     w, h = img.size
     px = img.load()
 
     def bar_col(x):
         return all(max(px[x, y]) <= BAR_LEVEL for y in range(0, h, max(1, h // 48)))
 
-    def bar_row(y):
-        return all(max(px[x, y]) <= BAR_LEVEL for x in range(0, w, max(1, w // 64)))
-
-    x0, x1, y0, y1 = 0, w, 0, h
+    x0, x1 = 0, w
     while x0 < w // 2 and bar_col(x0):
         x0 += 1
     while x1 > w // 2 and bar_col(x1 - 1):
         x1 -= 1
-    while y0 < h // 2 and bar_row(y0):
-        y0 += 1
-    while y1 > h // 2 and bar_row(y1 - 1):
-        y1 -= 1
-    if (x1 - x0) < w * MIN_CONTENT or (y1 - y0) < h * MIN_CONTENT:
+    if (x1 - x0) < w * MIN_CONTENT or abs(x0 - (w - x1)) > max(4, w // 100):
         return 0, 0, w, h
-    return x0, y0, x1, y1
+    return x0, 0, x1, h
 
 
 def to_hid(nx, ny):

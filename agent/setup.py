@@ -96,9 +96,10 @@ def locate(kvm, vlm, target, log, timeout=6.0):
 
 
 def pillarboxed(img):
-    """The capture shows the Mac's own (16:10) panel letterboxed into the 16:9 frame: built-in is the mirror master."""
+    """The capture shows the Mac's own panel (16:10-class, aspect ~1.55) inside the 16:9 frame: the built-in is
+    the mirror master. With the KVM as master the picture fills the frame (aspect 1.78)."""
     x0, y0, x1, y1 = content_rect(img)
-    return (x1 - x0) < img.width * 0.98 or (y1 - y0) < img.height * 0.98
+    return (x1 - x0) / (y1 - y0) < 1.70
 
 
 def settled(kvm, timeout=6.0, interval=0.4, tolerance=2.0):
@@ -283,6 +284,7 @@ def first_contact(kvm, vlm, log=print, usb_timeout=120, signal_timeout=45):
             report["problem"] = "display still not configured after accepting the mirroring dialog"
             return report
         mark("mirroring_s")
+        img = settled(kvm, timeout=4) or img   # judge the finished mirror setup, not the switch animation
     if img is not None and not pillarboxed(img):
         # mirroring with the KVM as master: the Mac's own panel is running at the KVM's 720p
         try:
