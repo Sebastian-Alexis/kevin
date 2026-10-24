@@ -21,6 +21,7 @@ import time
 import urllib.request
 
 from .kvm import KVM, PLACEHOLDER_SIZE, content_rect
+from .memory import learn, notes_text, recall
 from .run import latest, typed_where_wanted
 from .vlm import VLM, load_key
 
@@ -62,8 +63,9 @@ def combo(text):
 
 class Session:
     def __init__(self, kvm, base, model, key, os_name="macOS", save_dir=None, log=print, keep_images=3, max_side=1280,
-                 gate=None, task=""):
+                 gate=None, task="", memory=None, computer="mac"):
         self.kvm, self.base, self.model, self.key, self.os_name = kvm, base.rstrip("/"), model, key, os_name
+        self.memory, self.computer = memory, computer   # memory: base URL of agent.memory (Moss playbook), or None
         self.save_dir, self.log, self.keep_images, self.max_side = save_dir, log, keep_images, max_side
         self.gate, self.task, self.typed = gate, task, None   # gate: VLM judging where typed text landed before Enter
         self.frame = None        # the frame the last batch settled on
@@ -223,8 +225,14 @@ class Session:
     # --- loop -------------------------------------------------------------------------------------------------
     def run(self, task, max_turns=40, settle_max=2.0):
         self.task, self.typed = task, None
+        notes = recall(self.memory, task, self.computer) if self.memory else []
+        if notes:
+            self.log(f"memory: {len(notes)} note(s) recalled: " + " | ".join(n["text"][:70] for n in notes))
+        trajectory = []
         img = self.screen(fresh=True)
-        messages = [{"role": "user", "content": [{"type": "text", "text": task}, self.shot_block(img)]}]
+        prompt = task + ("\n\n" + notes_text(notes) if notes else "")
+        messages = [{"role": "user", "content": [{"type": "text", "text": prompt}, self.shot_block(img)]}]
+        result = {"done": False, "fail": "max turns reached", "turns": max_turns}
         for turn in range(1, max_turns + 1):
             t0 = time.monotonic()
             self.trim_images(messages)
@@ -234,9 +242,14 @@ class Session:
             messages.append({"role": "assistant", "content": content})
             calls = [c for c in content if c.get("type") == "tool_use"]
             text = " ".join(c.get("text", "") for c in content if c.get("type") == "text").strip()
+            if text:
+                trajectory.append(f"turn {turn}: {text}")
+            if calls:
+                trajectory.append(f"turn {turn} actions: " + json.dumps([c["input"] for c in calls])[:400])
             if not calls:
                 self.log(f"turn {turn}: model {t_model:.2f}s done -> {text[:300]}")
-                return {"done": True, "text": text, "turns": turn}
+                result = {"done": True, "text": text, "turns": turn}
+                break
             results, t1 = [], time.monotonic()
             for i, c in enumerate(calls):
                 try:
@@ -256,7 +269,14 @@ class Session:
             self.log(f"turn {turn}: model {t_model:.2f}s ({u.get('input_tokens')}+{u.get('cache_read_input_tokens')} cached "
                      f"+{u.get('output_tokens')} out) act+settle {time.monotonic() - t1:.2f}s | {text[:80]} -> "
                      + json.dumps([c["input"] for c in calls])[:300])
-        return {"done": False, "fail": "max turns reached", "turns": max_turns}
+        if self.memory:
+            done = result.get("done") and not any(w in result.get("text", "").lower()[:200] for w in ("couldn't", "could not", "unable", "cannot"))
+            out = learn(self.memory, task, self.computer, "success" if done else "failure",
+                        "\n".join(trajectory), [n["id"] for n in notes])
+            if out.get("learned") or out.get("quarantined"):
+                self.log("memory: learned " + " | ".join(l["text"][:80] for l in out.get("learned", []))
+                         + (" ; quarantined " + ", ".join(q["id"] for q in out["quarantined"]) if out.get("quarantined") else ""))
+        return result
 
 
 def main(argv=None):
@@ -271,9 +291,12 @@ def main(argv=None):
     p.add_argument("--os", dest="os_name", default="macOS")
     p.add_argument("--max-turns", type=int, default=40)
     p.add_argument("--save-dir", default=None)
+    p.add_argument("--memory", default=os.environ.get("AIKVM_MEMORY", "http://127.0.0.1:8020"), help="agent.memory service ('' disables)")
+    p.add_argument("--computer", default=os.environ.get("AIKVM_COMPUTER", "mac"), help="name of the computer under control, for memory")
     a = p.parse_args(argv)
     gate = VLM(a.gate, "qwen27", key=load_key(a.gate_key_file)) if a.gate else None
-    s = Session(KVM(a.kvm), a.llm, a.model, load_key(a.key_file) if a.key_file else None, a.os_name, a.save_dir, gate=gate)
+    s = Session(KVM(a.kvm), a.llm, a.model, load_key(a.key_file) if a.key_file else None, a.os_name, a.save_dir, gate=gate,
+                memory=a.memory or None, computer=a.computer)
     t0 = time.monotonic()
     result = s.run(a.task, a.max_turns)
     result["seconds"] = round(time.monotonic() - t0, 1)

@@ -121,6 +121,20 @@ driving the app over the KVM), so an interactive Droid session there has the sam
 Deploy to the KVM: `bash agent/deploy-mcp.sh` (rsyncs the `agent` package, builds the venv from offline wheels,
 installs the key and the unit).
 
+## Memory: it learns your machine (Moss)
+
+Every run ends by distilling what it established into a few falsifiable notes ("Factory app: the Connectors
+button at the bottom of the main window opens the MCP list; HTTP is the default transport"), stored in a Moss
+index with the computer, outcome and timestamp (`agent/memory.py`, service `ai-kvm-memory`, Moss sessions:
+local index synced to Moss Cloud). The next run on that computer recalls the relevant notes in ~5 ms
+(hybrid search, filtered to successful, non-quarantined notes) and gets them as rules. A failed run that
+followed a note and found it wrong quarantines it; a later success re-asserts it. Only lessons from successful
+runs are stored; typed text and task text never are.
+
+Measured on the Factory MCP task above: cold 8 turns / 34 s, warm (3 notes recalled) 5 turns / 20 s.
+Both `python3 -m agent` and the KVM's MCP server (`begin` recalls, `end(outcome, summary)` learns) use it;
+credentials in `/etc/ai-kvm/moss.env` (root-only).
+
 ## Setup
 
 - Pi: `provisioning/README.md` (flash, `pi/install.sh`, `pi/net/use-networkd.sh`).

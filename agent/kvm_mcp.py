@@ -20,12 +20,16 @@ from mcp.types import ImageContent, TextContent
 
 from .cu import SYSTEM, Session
 from .kvm import KVM, content_rect
+from .memory import learn, notes_text, recall
 from .run import latest, survey
 from .vlm import VLM, load_key
 
 # reached through forwards (the host's Tailscale address), so the Host header is not the bind address
 # stateless: no per-client session ids, so a server restart (deploy) never strands a connected app with
 # "Session not found"; the run state lives in the Session, keyed by begin()
+MEMORY = os.environ.get("AIKVM_MEMORY", "http://10.42.0.1:8020")   # agent.memory on the controller ('' disables)
+COMPUTER = os.environ.get("AIKVM_COMPUTER", "mac")
+
 mcp = FastMCP("ai-kvm", stateless_http=True,
               transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 _cu = None
@@ -70,8 +74,11 @@ def begin(task: str) -> list:
     c.frame = None
     ov = frame.crop(content_rect(frame))
     record({"begin": len(task), "size": list(img.size)})   # the task text may carry credentials: not persisted
-    text = (f"run {run_id} started. {SYSTEM.format(os=c.os_name)}\n\nFirst image: the screen "
-            f"({img.size[0]}x{img.size[1]}); second image: the overview of every open window (now closed again).")
+    c.notes = recall(MEMORY, task, COMPUTER) if MEMORY else []
+    c.trajectory = []
+    text = (f"run {run_id} started. {SYSTEM.format(os=c.os_name)}\n\n" + (notes_text(c.notes) + "\n\n" if c.notes else "")
+            + f"First image: the screen ({img.size[0]}x{img.size[1]}); second image: the overview of every open window "
+            "(now closed again). Call end(outcome, summary) when the task is complete or impossible.")
     c.shot_block(img)   # saves shot01.jpg in the run folder
     return [TextContent(type="text", text=text), picture(img), picture(ov)]
 
@@ -101,8 +108,22 @@ def computer(action: str, coordinate: list[int] | None = None, text: str | None 
         c.frame = latest(c.kvm, timeout=2.0, interval=0.0, tolerance=2.0, first_delay=0.25)
         image = c.shot_block(c.screen())
     record({"computer": {**inp, "text": f"<redacted: {len(inp['text'])} chars>"} if action == "type" else inp, "note": note})
+    if hasattr(c, "trajectory"):
+        c.trajectory.append(json.dumps({**inp, "text": "<typed>"} if action == "type" else inp))
     return [TextContent(type="text", text=note or "ok"),
             ImageContent(type="image", data=image["source"]["data"], mimeType="image/jpeg")]
+
+
+@mcp.tool(description="End the run: outcome is 'success' or 'failure', summary one short paragraph of what was done "
+          "and found. The run's lessons go to memory so the next run on this computer starts smarter.")
+def end(outcome: str, summary: str) -> str:
+    c = cu()
+    record({"end": outcome, "summary": summary})
+    out = learn(MEMORY, c.task, COMPUTER, "success" if outcome == "success" else "failure",
+                summary + "\nactions: " + " ".join(getattr(c, "trajectory", [])), [n["id"] for n in getattr(c, "notes", [])]) if MEMORY else {}
+    c.notes, c.trajectory = [], []
+    learned = out.get("learned", [])
+    return f"run ended ({outcome}); memory learned {len(learned)} note(s)" + (": " + " | ".join(l["text"] for l in learned) if learned else "")
 
 
 if __name__ == "__main__":

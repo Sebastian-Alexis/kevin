@@ -1,0 +1,15 @@
+[Unit]
+Description=ai-kvm memory (Moss playbook): recall/learn for the agent and the KVM, on loopback and the dev AP
+After=network.target
+
+[Service]
+User=jpa
+EnvironmentFile=/etc/ai-kvm/moss.env
+Environment=HOME=/home/jpa
+WorkingDirectory=/home/jpa/Programming/ai-kvm
+ExecStart=/home/jpa/Programming/ai-kvm/.venv-droid/bin/python -m agent.memory --serve 127.0.0.1:8020 --serve 10.42.0.1:8020
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
