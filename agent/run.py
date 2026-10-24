@@ -29,7 +29,8 @@ Target OS: %(os)s
 Previous turns:
 %(past)s
 Reply with ONLY one JSON object, no prose:
-{"plan": "<=80 words: possible groupings of the items, the surest one and why, and the move this turn makes", "observe": "<=8 words: what changed / what you see", "actions": ["...", "..."], "done": false}
+{"plan": "<=80 words: possible groupings of the items, the surest one and why, and the moves this turn makes", "observe": "<=8 words: what changed / what you see", "steps": [{"actions": ["...", "..."], "expect": "<=12 words: what the screen shows if this step worked"}], "done": false}
+Plan as far ahead as this screenshot allows: several steps run in sequence without you looking again, as long as each step's "expect" is confirmed on the screen; the first step whose expectation fails stops the turn and you see the screen again.
 Each action is one short string:
  "click <target> @x,y"   (also "double_click", "right_click"; x,y = center of the element, %(coords)s; target = short unique description)
  "type <text>"           types into whatever has keyboard focus
@@ -45,7 +46,7 @@ Rules:
 - Only target things visible in this screenshot; for anything not visible yet, end the turn and look again. In a browser, the fastest way to reach something further down a page is "key cmd+f", "type <its text>", "key enter", "key esc" in one batch, which scrolls it into view.
 - If the last turn did not work, do something different instead of repeating it.
 - Batch only what you can see (e.g. click a visible field, type, enter), and finish the move in the same batch: when a confirm/submit/OK button is visible, click it too.
-Task complete: {"plan": "...", "observe": "...", "actions": [], "done": true}. Impossible: {"plan": "...", "observe": "...", "actions": [], "fail": "reason"}."""
+Task complete: {"plan": "...", "observe": "...", "steps": [], "done": true}. Impossible: {"plan": "...", "observe": "...", "steps": [], "fail": "reason"}."""
 
 CLICKS = ("click", "double_click", "right_click")
 HISTORY_TURNS = 8   # turns of history shown to the model
@@ -59,10 +60,12 @@ TURN_SCHEMA = {
     "properties": {
         "plan": {"type": "string"},
         "observe": {"type": "string"},
-        "actions": {"type": "array", "items": {"type": "string"}},
+        "steps": {"type": "array", "items": {"type": "object", "properties": {
+            "actions": {"type": "array", "items": {"type": "string"}}, "expect": {"type": "string"}},
+            "required": ["actions", "expect"], "additionalProperties": False}},
         "done": {"type": "boolean"},
         "fail": {"type": "string"}},
-    "required": ["plan", "observe", "actions", "done"],
+    "required": ["plan", "observe", "steps", "done"],
     "additionalProperties": False}
 
 
@@ -90,7 +93,7 @@ def point(text):
     raise ValueError(f"no point in grounding reply: {text[:120]!r}")
 
 
-ACTION_RE = re.compile(r"^\s*(click|double_click|right_click|scroll)\s+(.*?)\s*@\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*(-?\d+)?\s*$", re.S)
+ACTION_RE = re.compile(r"^\s*(click|double_click|right_click|scroll)\s+(.*?)\s*@\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*([-+]?\d+)?\s*$", re.S)
 
 
 def parse_action(s):
@@ -108,7 +111,7 @@ def parse_action(s):
     verb, _, rest = s.partition(" ")
     verb = verb.lower()
     if verb in CLICKS or verb == "scroll":   # no "@x,y": a bare target, to be grounded by the grounder model
-        m2 = re.match(r"^(.*?)(?:\s+(-?\d+))?$", rest.strip(), re.S)
+        m2 = re.match(r"^(.*?)(?:\s+([-+]?\d+))?$", rest.strip(), re.S)
         spec = {"target": m2.group(1).strip(), "point_2d": None}
         if verb == "scroll":
             spec["ticks"] = int(m2.group(2)) if m2.group(2) else -3
@@ -134,6 +137,8 @@ def split_actions(actions):
 
 # Keys that put keyboard focus into an input (new tab/window, location, find, quick switcher).
 FOCUS_KEYS = {f"{m}+{k}" for m in ("cmd", "ctrl") for k in "tlnfk"}
+# App shortcuts that are harmless whatever is focused (reload, zoom reset, dismiss) and may lead a batch.
+SAFE_KEYS = FOCUS_KEYS | {"cmd+r", "ctrl+r", "cmd+0", "ctrl+0", "esc", "escape"}
 
 
 def unfocused_keys(actions, focused=False, primed=False):
@@ -147,9 +152,10 @@ def unfocused_keys(actions, focused=False, primed=False):
         if "type" in a and not primed:
             return True
         if "key" in a:
-            if not (focused or primed):
+            combo = str(a["key"]).lower().replace(" ", "")
+            if not (focused or primed or combo in SAFE_KEYS):
                 return True
-            primed = str(a["key"]).lower().replace(" ", "") in FOCUS_KEYS
+            primed = combo in FOCUS_KEYS
     return False
 
 
@@ -325,7 +331,7 @@ def task_app(vlm, task):
     return app.strip() if isinstance(app, str) and app.strip() else None
 
 
-def open_app(kvm, vlm, name, os_name="macOS"):
+def open_app(kvm, vlm, name, os_name="macOS", hide=True):
     """Bring an app to the front, starting it if needed, through the OS launcher: cmd+space on macOS (Spotlight, or
     Raycast/Alfred when they own it), the bare Windows/Super key elsewhere. Nothing is typed until a launcher is
     seen open (only what changed is asked about), and Enter is pressed only when its top result is that app.
@@ -337,6 +343,10 @@ def open_app(kvm, vlm, name, os_name="macOS"):
     active = f'Is "{name}" (or a short form of that name) the bold active-app name right of the Apple logo?'
 
     def hide_others():
+        if not hide:
+            return True, f"open_app {name}: done, the menu bar shows {name} as the active app. No text field has focus " \
+                         "yet: begin the batch with the app's shortcut for the input (e.g. cmd+t, cmd+l) or a click on it", \
+                latest(kvm, timeout=1.0, **fast)
         kvm.actions([{"type": "key", "combo": "alt+cmd+h"}])
         return True, (f"open_app {name}: done, the menu bar shows {name} as the active app; other apps are hidden. "
                       "No text field has focus yet: begin the batch with the app's shortcut for the input (e.g. "
@@ -445,10 +455,11 @@ def ground(grounder, screen, target):
 
 
 def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=False, save_dir=None, log=print,
-        coords="norm", app=None, grounder=None, restore=False, isolate=True):
+        coords="norm", app=None, grounder=None, restore=False, isolate=True, verifier=None):
     """Drive the computer until the model reports the task done or impossible. An app the task names is brought
     to the front before the first look (on macOS with the other apps hidden until the run ends)."""
     history, batches, frame = [], [], None
+    queue, observe = [], ""   # remaining steps of the current plan; last observation
     mac = os_name.lower().startswith("mac")
     focused = hidden = False   # focused: the app open_app raised still has keyboard focus (no click since)
     primed = False             # the last executed batch ended with a focus key (cmd+t, cmd+l, ...): its input has focus
@@ -489,13 +500,22 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                     or "(none yet. If the task names an app, start with open_app for it.)")
             if omitted:
                 past = f"({omitted} earlier turns omitted)\n" + past
-            reply, usage, t_plan = vlm.chat([{"role": "system", "content": SYSTEM},
-                                             {"role": "user", "content": [image, {"type": "text", "text": PLAN % {
-                                                 "task": task, "os": os_name, "past": past, "coords": coord_text}}]}],
-                                            1500, TURN_SCHEMA)
+            if queue:   # a later step of the last plan: the previous step's expectation held, so no new planner call
+                reply, usage, t_plan = None, {}, 0.0
+                decision = {"steps": queue, "observe": observe}
+            else:
+                reply, usage, t_plan = vlm.chat([{"role": "system", "content": SYSTEM},
+                                                 {"role": "user", "content": [image, {"type": "text", "text": PLAN % {
+                                                     "task": task, "os": os_name, "past": past, "coords": coord_text}}]}],
+                                                1500, TURN_SCHEMA)
             try:
-                decision = parse(reply)
-                actions = split_actions(decision.get("actions", []))
+                if reply is not None:
+                    decision = parse(reply)
+                    queue = list(decision.get("steps") or ([{"actions": decision.get("actions", []), "expect": ""}]
+                                                           if decision.get("actions") is not None else []))
+                current = queue.pop(0) if queue else {"actions": [], "expect": ""}
+                expect = str(current.get("expect", ""))[:120]
+                actions = split_actions(current.get("actions", []))
                 if grounder:
                     # all of a batch's targets at once: vLLM batches the requests, ~1.3 s total instead of per click
                     from concurrent.futures import ThreadPoolExecutor
@@ -527,6 +547,8 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                         a["scroll"]["ticks"] = -int(a["scroll"].get("ticks", -3))
                 observe = str(decision.get("observe", ""))[:120]
                 summary = json.dumps(actions, separators=(",", ":"))
+                if reply is None:
+                    log(f"step {step}: continuing the plan ({len(queue)} step(s) left) -> {summary}")
                 # repeat key: verbs + targets + coordinates to the nearest 20 units, so a re-aimed click on the same
                 # thing (339,575 vs 339,576) still counts as the same batch; rejected batches count too
                 key = json.dumps([{k: (v if not isinstance(v, dict) else {"t": v.get("target"), "p": [round(c / 20) for c in v.get("point_2d", [])]})
@@ -541,17 +563,20 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                     history.append(f"saw: {observe} | REJECTED, off-screen point(s) {off}: the picture is {sw}x{sh}, "
                                    "give coordinates inside it")
                     log(f"step {step}: model {t_plan:.2f}s rejected off-screen points {off}")
+                    queue.clear()
                     continue
                 if not hidden and unfocused_keys(actions, focused, primed):   # isolated: keys can only reach the task's app
                     history.append(f"saw: {observe} | REJECTED, nothing was typed: no text field has focus. Begin the "
                                    "batch with the shortcut that focuses the input (e.g. cmd+t, cmd+l) or a click on "
                                    f"it, then type: {summary}")
                     log(f"step {step}: model {t_plan:.2f}s rejected unfocused keys -> {summary}")
+                    queue.clear()
                     continue
                 plan, dropped = segments(actions)
             except (ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError) as e:
                 history.append(f"invalid reply ignored ({e})")
                 log(f"step {step}: unusable reply ({e}) {reply[:120]!r}")
+                queue.clear()
                 continue
             done = decision.get("done") or decision.get("fail")
             notes = [f"{dropped} later action(s) skipped: open_app ends the turn"] if dropped else []
@@ -577,14 +602,25 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                             done, blocked = False, True
                             break
                     else:
-                        focused, note, frame = open_app(kvm, vlm, arg, os_name)
-                        hidden = hidden or (focused and mac)
+                        focused, note, frame = open_app(kvm, vlm, arg, os_name, hide=isolate)
+                        hidden = hidden or (focused and mac and isolate)
                         notes.insert(0, note)
                 tail = plan[-1][1][-1] if plan and plan[-1][0] == "hid" and not blocked else {}
                 primed = tail.get("type") == "key" and tail["combo"].lower().replace(" ", "") in FOCUS_KEYS
                 if plan and frame is None and not done:
                     # paced by the capture itself (~70 ms a frame at 14 fps): an instant UI change settles in ~0.25 s
                     frame = latest(kvm, timeout=settle_cap, interval=0.0, tolerance=2.0, first_delay=0.1)
+                if queue and not blocked and expect:
+                    # the plan continues only if this step's expected outcome is on screen; else back to the planner
+                    t_v = time.monotonic()
+                    check = frame.crop(content_rect(frame))
+                    ok_ = yes(verifier or vlm, check, f"Does this screenshot show the following? {expect}")
+                    log(f"  verify {expect!r}: {'yes' if ok_ else 'NO'} ({time.monotonic() - t_v:.2f}s)")
+                    if not ok_:
+                        notes.insert(0, f'expected "{expect}" but the screen does not show it; the rest of the plan was dropped')
+                        queue.clear()
+                elif blocked:
+                    queue.clear()
             t_act = time.monotonic() - t1
             extra = "".join(f" | {n}" for n in notes)
             history.append(f"saw: {observe} | did: {summary}{extra}")
@@ -624,6 +660,9 @@ def main(argv=None):
     p.add_argument("--grounder-model", default="holo4")
     p.add_argument("--show-all", action="store_true", help="at the end, bring back the apps Hide Others hid (off by default)")
     p.add_argument("--no-isolate", dest="isolate", action="store_false", help="do not raise the app / Hide Others first")
+    p.add_argument("--verifier", default=os.environ.get("AIKVM_LLM_BASE", "http://127.0.0.1:8000/v1"),
+                   help="endpoint for the cheap yes/no checks between planned steps (default: local qwen27)")
+    p.add_argument("--verifier-model", default=os.environ.get("AIKVM_LLM_MODEL", "qwen27"))
     a = p.parse_args(argv)
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
@@ -634,7 +673,8 @@ def main(argv=None):
     if grounder:
         coords = "norm"   # Holo4 answers on the 0-1000 grid
     result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords,
-                 app=a.app, grounder=grounder, restore=a.show_all, isolate=a.isolate)
+                 app=a.app, grounder=grounder, restore=a.show_all, isolate=a.isolate,
+                 verifier=VLM(a.verifier, a.verifier_model, key=load_key("/etc/gemma4-vllm-api-key")) if a.verifier else None)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 
