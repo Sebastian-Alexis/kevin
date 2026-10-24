@@ -53,5 +53,5 @@ dtoverlay=nospi10
 # USB OTG peripheral mode for HID (keyboard/mouse) gadget to the target host
 dtoverlay=dwc2,dr_mode=peripheral
 # Toshiba TC358743 HDMI->CSI-2 bridge (HDMI capture)
-dtoverlay=tc358743
+dtoverlay=tc358743,link-frequency=297000000
 # PiSugar UPS speaks I2C (enabled above via dtparam=i2c_arm=on)
