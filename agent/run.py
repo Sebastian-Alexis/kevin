@@ -34,7 +34,7 @@ Each action is one short string:
  "click <target> @x,y"   (also "double_click", "right_click"; x,y = center of the element, %(coords)s; target = short unique description)
  "type <text>"           types into whatever has keyboard focus
  "key cmd+l"             key combo of cmd ctrl alt shift + a-z 0-9 enter esc tab backspace delete space up down left right home end pageup pagedown f1-f12
- "scroll <target> @x,y -5"   negative = down
+ "scroll <target> @x,y -5"   negative = down; one tick is ~1/13 of the screen (about -13 for a screenful, -40 to reach the bottom of a page)
  "wait <ms>"             only for things that take longer than 2 s (the next screenshot is taken once the screen has settled anyway)
  "open_app <name>"       brings that app to the front, starting it if needed; ends the turn
 Rules:
@@ -42,7 +42,7 @@ Rules:
 - Windows overlap and look alike: whenever you are not sure the task's app is the frontmost window, open_app it.
 - Do every step the task names, in order; never skip one (e.g. open the new tab it asks for before searching).
 - Never type into terminals, chats or apps the task does not name.
-- Only target things visible in this screenshot; for anything not visible yet, end the turn and look again.
+- Only target things visible in this screenshot; for anything not visible yet, end the turn and look again. In a browser, the fastest way to reach something further down a page is "key cmd+f", "type <its text>", "key enter", "key esc" in one batch, which scrolls it into view.
 - If the last turn did not work, do something different instead of repeating it.
 - Batch only what you can see (e.g. click a visible field, type, enter), and finish the move in the same batch: when a confirm/submit/OK button is visible, click it too.
 Task complete: {"plan": "...", "observe": "...", "actions": [], "done": true}. Impossible: {"plan": "...", "observe": "...", "actions": [], "fail": "reason"}."""
