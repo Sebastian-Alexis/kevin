@@ -52,6 +52,21 @@ def ascii_to_key(ch):
     raise ValueError(f"unmappable character {ch!r}")
 
 
+def _write(obj, buf):
+    """Write one report on a persistent fd; reopen once if the host re-enumerated (ENODEV/ESHUTDOWN)."""
+    for attempt in (0, 1):
+        if getattr(obj, "fd", None) is None:
+            obj.fd = os.open(obj.dev, os.O_WRONLY | os.O_APPEND)
+        try:
+            os.write(obj.fd, buf)
+            return
+        except OSError:
+            os.close(obj.fd)
+            obj.fd = None
+            if attempt:
+                raise
+
+
 class Keyboard:
     def __init__(self, dev=KBD_DEV):
         self.dev = dev
@@ -59,8 +74,7 @@ class Keyboard:
 
     def _report(self, mods=0, keys=()):
         buf = bytes([mods, 0, *keys, *([0] * (6 - len(keys)))])
-        with open(self.dev, "wb", buffering=0) as f:
-            f.write(buf)
+        _write(self, buf)
 
     def release_all(self):
         with self.lock:
@@ -115,8 +129,7 @@ class Mouse:
 
     def _report(self, wheel=0):
         buf = struct.pack("<BHHb", self.buttons, self.x, self.y, wheel)
-        with open(self.dev, "wb", buffering=0) as f:
-            f.write(buf)
+        _write(self, buf)
 
     @classmethod
     def norm(cls, v, size):
