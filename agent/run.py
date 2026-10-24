@@ -28,7 +28,7 @@ Target OS: %(os)s
 Previous turns:
 %(past)s
 Reply with ONLY one JSON object, no prose:
-{"plan": "<=25 words: the one move this turn makes and why (e.g. which four items form a group)", "observe": "<=8 words: what changed / what you see", "actions": ["...", "..."], "done": false}
+{"plan": "<=80 words: possible groupings of the items, the surest one and why, and the move this turn makes", "observe": "<=8 words: what changed / what you see", "actions": ["...", "..."], "done": false}
 Each action is one short string:
  "click <target> @x,y"   (also "double_click", "right_click"; x,y = center of the element, %(coords)s; target = short unique description)
  "type <text>"           types into whatever has keyboard focus
@@ -463,7 +463,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             reply, usage, t_plan = vlm.chat([{"role": "system", "content": SYSTEM},
                                              {"role": "user", "content": [image, {"type": "text", "text": PLAN % {
                                                  "task": task, "os": os_name, "past": past, "coords": coord_text}}]}],
-                                            700, TURN_SCHEMA)
+                                            1500, TURN_SCHEMA)
             try:
                 decision = parse(reply)
                 actions = split_actions(decision.get("actions", []))
