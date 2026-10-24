@@ -3,12 +3,16 @@
 
 macOS remembers a display's mirroring setup by EDID identity, so a serial that is stable per device (taken
 from the Pi's own serial number) makes the first-plug setup a one-time event on each target computer.
+AIKVM_EDID_SERIAL (hex) overrides it, e.g. to make targets treat the KVM as a new display again.
 Usage: edid.py <template.hex>  >  /run/ai-kvm/edid.hex
 """
+import os
 import sys
 
 
 def device_serial():
+    if os.environ.get("AIKVM_EDID_SERIAL"):
+        return int(os.environ["AIKVM_EDID_SERIAL"], 16)
     try:
         with open("/proc/device-tree/serial-number") as f:
             return int(f.read().strip("\x00\n ")[-8:], 16)

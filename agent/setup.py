@@ -151,7 +151,7 @@ def ask_yes(kvm, vlm, question):
 SETTINGS_FRONT = 'Does the menu bar show "System Settings" as the active app name next to the Apple logo?'
 
 
-def open_system_settings(kvm, vlm, log, attempts=2):
+def open_system_settings(kvm, vlm, log, attempts=3):
     """Apple menu > System Settings..., confirmed by the menu bar naming it the active app. The Apple logo is
     unambiguous, unlike picking the Screen Mirroring icon out of a dozen third-party status icons."""
     for _ in range(attempts):
@@ -160,13 +160,13 @@ def open_system_settings(kvm, vlm, log, attempts=2):
                       log, retry=lambda: reveal_menu_bar(kvm))
         click(kvm, ax, ay)
         time.sleep(0.5)
+        # the item sits in the dropped-down menu, clearly below the menu bar (~33 units tall at 720p)
         sx, sy = find(kvm, vlm, 'the "System Settings..." item in the open Apple menu',
-                      lambda x, y: x < 400 and ay + 15 < y < 450, log,
+                      lambda x, y: x < 400 and ay + 30 < y < 450, log,
                       retry=lambda: (reveal_menu_bar(kvm), click(kvm, ax, ay)))
         click(kvm, sx, sy)
-        time.sleep(1.2)
-        reveal_menu_bar(kvm)
-        if ask_yes(kvm, vlm, SETTINGS_FRONT):
+        # a cold launch of System Settings can take several seconds: poll before deciding it failed
+        if wait_for(lambda: (reveal_menu_bar(kvm), ask_yes(kvm, vlm, SETTINGS_FRONT))[1], 7, interval=0.3):
             return
         log("  System Settings did not come to the front, retrying")
         kvm.actions([{"type": "key", "combo": "esc"}])
@@ -184,12 +184,9 @@ def show_all_and_close(kvm, vlm, log):
     sx, sy = find(kvm, vlm, 'the "Show All" item in the open System Settings menu',
                   lambda x, y: abs(x - ux) < 300 and y > uy + 30, log)
     click(kvm, sx, sy)
-    time.sleep(0.6)
-    reveal_menu_bar(kvm)
-    if ask_yes(kvm, vlm, SETTINGS_FRONT):
-        kvm.actions([{"type": "key", "combo": "cmd+w"}])
-    else:
-        log("  System Settings is not frontmost; leaving its window open")
+    time.sleep(0.4)
+    # a click in System Settings' own menu leaves it the active app, so cmd+w closes its window and nothing else
+    kvm.actions([{"type": "key", "combo": "cmd+w"}])
 
 
 def optimize_for_mac(kvm, vlm, log):
@@ -220,7 +217,7 @@ def optimize_for_mac(kvm, vlm, log):
                                 '"ai-kvm")', lambda x, y: abs(y - py) < 250 and abs(x - px) < 300, log)
         click(kvm, mx, my)
         restored = wait_for(lambda: (lambda f: f if f is not None and pillarboxed(f) else None)(frame(kvm)), 6)
-        settled(kvm, timeout=3)
+        settled(kvm, timeout=1.5)
     finally:
         try:
             show_all_and_close(kvm, vlm, log)

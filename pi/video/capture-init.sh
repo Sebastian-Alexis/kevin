@@ -10,8 +10,14 @@
 set -eu
 DEV=${1:-/dev/video0}
 mkdir -p /run/ai-kvm
+# optional overrides, e.g. AIKVM_EDID_SERIAL=4b4d5800 to make targets treat the KVM as a new display
+if [ -r /etc/default/ai-kvm ]; then set -a; . /etc/default/ai-kvm; set +a; fi
 python3 /opt/ai-kvm/video/edid.py /opt/ai-kvm/video/edid.hex > /run/ai-kvm/edid.hex
 for _ in $(seq 1 30); do [ -e "$DEV" ] && break; sleep 1; done
+# Hold hotplug low briefly so the target treats this as a fresh connection and re-reads the EDID. After a cold
+# plug-in it was low anyway; after a warm reboot the bridge stayed powered and the target would keep its old view.
+v4l2-ctl -d "$DEV" --clear-edid || true
+sleep 2
 v4l2-ctl -d "$DEV" --set-edid=pad=0,file=/run/ai-kvm/edid.hex,format=hex
 v4l2-ctl -d "$DEV" --set-dv-bt-timings query || true
 v4l2-ctl -d "$DEV" --query-dv-timings || true
