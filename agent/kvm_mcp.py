@@ -66,7 +66,9 @@ def record(event):
 @mcp.tool()
 def begin(task: str) -> list:
     """Start a run for `task` (call once first): resets the step counter and keyboard-focus tracking, opens a run
-    folder for the frames and the event log, and returns the run id with the current screenshot."""
+    folder for the frames and the event log, and returns the run id with TWO screenshots: the current screen, then
+    the overview of every open window (what the user already has running: use those apps for the task; open_app
+    something else only when nothing suitable is open). The overview is closed again before this returns."""
     ex = executor()
     if ex.overview:   # a previous run ended in the window overview
         ex.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 300}])
@@ -78,8 +80,17 @@ def begin(task: str) -> list:
         f.write(task + "\n")
     img = ex.screen(fresh=True)
     ex.save(img, "step00.jpg")
+    from .kvm import content_rect
+    from .run import survey as overview_of
+    frame = overview_of(ex.kvm, ex.os_name)
+    ex.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
+    ex.frame = None   # the next look/act captures the normal screen, not the overview
+    ov = frame.crop(content_rect(frame))
+    ex.save(ov, "step00-overview.jpg")
     record({"begin": task, "size": list(img.size)})
-    return [TextContent(type="text", text=f"run {run_id} started; screenshot {img.size[0]}x{img.size[1]}"), picture(img)]
+    return [TextContent(type="text", text=f"run {run_id} started; screenshot {img.size[0]}x{img.size[1]}, then the "
+                        "overview of every open window (which apps are already in use: prefer them)"),
+            picture(img), picture(ov)]
 
 
 def picture(img):
@@ -131,7 +142,8 @@ def survey() -> list:
 
 @mcp.tool()
 def open_app(name: str) -> list:
-    """Bring the named application to the front (launching it if needed). Returns the screenshot afterwards."""
+    """Bring the named application to the front (launching it if needed). Returns the screenshot afterwards. Prefer an
+    app the overview (begin / survey) showed already running; launch something else only when nothing open fits."""
     return act([f"open_app {name}"], "")
 
 
