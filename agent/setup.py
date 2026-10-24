@@ -139,17 +139,25 @@ def reveal_menu_bar(kvm):
                  {"type": "move", "x": 0.52, "y": 0.0}, {"type": "wait", "ms": 450}])
 
 
-def ask_yes(kvm, vlm, question):
+def ask_yes(kvm, vlm, question, box=None, scale=2):
+    """Yes/no question about the screen. box=(x0, y0, x1, y1) as fractions crops (and upscales) the region that
+    holds the answer: a menu-bar strip is ~130 image tokens and answers in ~0.4 s instead of ~0.9 s."""
     img = frame(kvm)
     if img is None:
         return False
+    img = img.crop(content_rect(img))
+    if box:
+        w, h = img.size
+        img = img.crop((int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h)))
+        img = img.resize((img.width * scale, img.height * scale))
     text, _, _ = vlm.chat([{"role": "system", "content": SYSTEM},
-                           {"role": "user", "content": [vlm.image_part(img.crop(content_rect(img))),
+                           {"role": "user", "content": [vlm.image_part(img),
                                                         {"type": "text", "text": question + " Answer only yes or no."}]}], 4)
     return text.strip().lower().startswith("yes")
 
 
-SETTINGS_FRONT = 'Does the menu bar show "System Settings" as the active app name next to the Apple logo?'
+SETTINGS_FRONT = 'Does this menu bar show "System Settings" as the active app name next to the Apple logo?'
+MENU_BAR_LEFT = (0, 0, 0.32, 0.06)
 
 
 # With the KVM as mirror master the Mac runs the KVM's only mode, 1280x720, so the Apple menu is laid out
@@ -180,7 +188,8 @@ def open_system_settings(kvm, vlm, log, attempts=3):
                           retry=lambda: (reveal_menu_bar(kvm), click(kvm, ax, ay)))
         click(kvm, sx, sy)
         # a cold launch of System Settings can take several seconds: poll before deciding it failed
-        if wait_for(lambda: (reveal_menu_bar(kvm), ask_yes(kvm, vlm, SETTINGS_FRONT))[1], 7, interval=0.2):
+        if wait_for(lambda: (reveal_menu_bar(kvm), ask_yes(kvm, vlm, SETTINGS_FRONT, MENU_BAR_LEFT))[1], 7,
+                    interval=0.2):
             return
         log("  System Settings did not come to the front, retrying")
         kvm.actions([{"type": "key", "combo": "esc"}])
@@ -212,17 +221,23 @@ def optimize_for_mac(kvm, vlm, log):
     # other apps' windows (e.g. a terminal set to float on top) can cover System Settings: hide them for now
     kvm.actions([{"type": "key", "combo": "alt+cmd+h"}, {"type": "wait", "ms": 400}])
     try:
-        qx, qy = find(kvm, vlm, "the Search field at the top of the System Settings window's left sidebar",
-                      lambda x, y: y < 450, log, timeout=6)
-        click(kvm, qx, qy)
-        kvm.actions([{"type": "key", "combo": "cmd+a"}, {"type": "type", "text": "Displays"},
-                     {"type": "wait", "ms": 700}])
-        dx, dy = find(kvm, vlm, '"Displays" in the System Settings sidebar search results',
-                      lambda x, y: abs(x - qx) < 300 and y > qy, log)
-        click(kvm, dx, dy)
-        time.sleep(0.6)
-        px, py = find(kvm, vlm, 'the pop-up button showing "ai-kvm" to the right of the "Optimize for" label in the '
-                                'System Settings Displays pane', lambda x, y: x > 400 and 80 < y < 960, log, timeout=8)
+        # cmd+f focuses System Settings' search; Down + Return opens the first result (Displays). No model calls.
+        kvm.actions([{"type": "key", "combo": "cmd+f"}, {"type": "wait", "ms": 200},
+                     {"type": "key", "combo": "cmd+a"}, {"type": "type", "text": "Displays"},
+                     {"type": "wait", "ms": 700}, {"type": "key", "combo": "down"}, {"type": "wait", "ms": 150},
+                     {"type": "key", "combo": "enter"}, {"type": "wait", "ms": 600}])
+        popup = 'the pop-up button showing "ai-kvm" to the right of the "Optimize for" label in the System Settings ' \
+                'Displays pane'
+        on_pane = lambda x, y: x > 400 and 80 < y < 960   # noqa: E731
+        try:
+            px, py = find(kvm, vlm, popup, on_pane, log, timeout=4)
+        except RuntimeError:
+            log("  Displays pane not open after the keyboard route; clicking the search result instead")
+            dx, dy = find(kvm, vlm, '"Displays" in the System Settings sidebar search results',
+                          lambda x, y: x < 600 and y > 80, log)
+            click(kvm, dx, dy)
+            time.sleep(0.6)
+            px, py = find(kvm, vlm, popup, on_pane, log, timeout=8)
         click(kvm, px, py)
         time.sleep(0.35)
         # macOS opens the list so the selected item sits on the button: other items appear above/below it
