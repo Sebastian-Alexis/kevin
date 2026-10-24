@@ -97,8 +97,11 @@ the same task (new tab, read the top of Hacker News) with the gateway's per-requ
 direct 15 s in 2 model calls; through Droid ~25 s in 6 model calls. The KVM side is ~4 s either way. Droid's extra
 is structural: it wraps every MCP call in its `Script` tool (12 KB of tool schemas on every request, code instead
 of a tool call), adds a title-generation call, and always spends a closing turn after the last tool result.
-Per screenshot, the next action lands on the computer 2-5 s later on both paths: 90% of that is the model
-deciding (Opus 5.5; Sonnet 5.5 is ~1.5-2 s), the KVM adds ~0.1 s to act and 0.25-2 s to let the screen settle.
+Per screenshot, the next action lands on the computer 2-4 s later on both paths: 90% of that is the model
+deciding, the KVM adds ~0.1 s to act and 0.25-2 s to let the screen settle. Planner A/B on this task, 3 runs each:
+Sonnet 5.5 (default now) 8.5-11.5 s direct / 23-31 s Droid, 2.0-2.9 s per decision, 3/3 correct on both paths;
+Opus 5.5 10-17 s / 29-30 s, 2.5-4.0 s per decision; Haiku 5.5 fastest per call (1.4-2.7 s) but failed every Droid
+run and was erratic direct. Droid stays a constant ~3x the direct loop whatever the planner (6-7 model calls vs 2).
 
 The rails live inside the server, so they bind every planner the same way: off-screen points are refused with an
 error result, and Enter after typed text is gated on where the text landed (judged by qwen27 on the controller,

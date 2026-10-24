@@ -195,7 +195,7 @@ def main(argv=None):
     p.add_argument("task", nargs="?")
     p.add_argument("--inbox", help="watch this directory for *.task files instead of running one task")
     p.add_argument("--mcp", default=os.environ.get("AIKVM_MCP", "http://100.93.148.36:8090/mcp"), help="the KVM's MCP endpoint")
-    p.add_argument("--model", default=os.environ.get("AIKVM_DROID_MODEL", "custom:Claude-Opus-5.5-0"))
+    p.add_argument("--model", default=os.environ.get("AIKVM_DROID_MODEL", "custom:Claude-Sonnet-5.5-0"))
     p.add_argument("--state", default=os.environ.get("AIKVM_STATE", "/run/ai-kvm/state.json"), help="daemon state file; '' to skip the readiness check")
     p.add_argument("--report", default=None, help="report base path for a one-off task (default: runs/<timestamp>)")
     a = p.parse_args(argv)

@@ -317,7 +317,7 @@ def main(argv=None):
     p.add_argument("task")
     p.add_argument("--kvm", default=os.environ.get("AIKVM_URL", "http://10.42.0.101:8080"))
     p.add_argument("--llm", default=os.environ.get("AIKVM_ANTHROPIC_BASE", "http://127.0.0.1:4001/v1"), help="Anthropic Messages-compatible base")
-    p.add_argument("--model", default=os.environ.get("AIKVM_CU_MODEL", "anthropic/claude-opus-5-5"))
+    p.add_argument("--model", default=os.environ.get("AIKVM_CU_MODEL", "anthropic/claude-sonnet-5-5"))
     p.add_argument("--key-file", default=None, help="key for --llm (the local gateway needs none)")
     p.add_argument("--gate", default=os.environ.get("AIKVM_LLM_BASE", "http://127.0.0.1:8000/v1"), help="local model judging Enter after typed text ('' disables)")
     p.add_argument("--gate-key-file", default="/etc/gemma4-vllm-api-key")
