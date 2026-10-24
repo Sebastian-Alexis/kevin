@@ -160,3 +160,27 @@ credentials in `/etc/ai-kvm/moss.env` (root-only).
   MacBook; a 16:9 iMac looks the same either way.
 - The keyboard identifies as an Apple keyboard (no Keyboard Setup Assistant), so F1-F12 are media keys on macOS.
 - Capture is 720p60 over 2 CSI lanes.
+
+## Actor training data
+
+Each sample is `(screenshot ≤1280px, instruction, one action)`. Actions are JSON with coordinates 0–1000 relative to the
+screenshot (`shared/actions.py` is the schema; `shared/actor_prompt.txt` is the prompt used in training and inference).
+`actions.to_pi()` converts to the Pi control API.
+
+| Source | Script | Labels from | Human work |
+|---|---|---|---|
+| `osatlas` | `datagen/osatlas_convert.py` | OS-Atlas desktop set (Apache-2.0), range-read from HF | none |
+| `web` | `datagen/web_grounding.py` | DOM boxes of live pages (headless Chromium) | none |
+| `templates` | `datagen/action_templates.py` | key combo / scroll / type templates on real frames | none |
+| `ax` | `datagen/ax_grounding.py` | macOS accessibility tree | drive apps into varied states |
+| `gold` | `datagen/gold_label.py` | hand labels on Pi HDMI captures | ~200 labels, **eval only** |
+| `teacher` | agent teacher mode (todo) | Droid trajectories | review flagged episodes |
+
+`datagen/rephrase.py` rewrites click instructions into the planner's voice with Claude and flags bad labels.
+`datagen/preview.py` draws targets on frames for spot checks.
+
+```bash
+uv venv --python 3.12 .venv && uv pip install -p .venv -r datagen/requirements.txt && .venv/bin/playwright install chromium
+bash datagen/round1.sh            # osatlas + web + templates (+ rephrase if ANTHROPIC_API_KEY) -> data/export/
+```
+Training on Vultr: `training/RUNBOOK.md`. Data lives in `data/` (gitignored).
