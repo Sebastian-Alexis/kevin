@@ -523,7 +523,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                         # a click can move keyboard focus anywhere: another window, the desktop
                         focused = focused and not any(a["type"] == "click" for a in arg)
                     elif kind == "gate":
-                        fits, holder = (True, "") if hidden else typed_where_wanted(kvm, vlm, task, arg)
+                        fits, holder = typed_where_wanted(kvm, vlm, task, arg)   # a chat tab inside the app is not covered by Hide Others
                         if not fits:
                             notes.insert(0, f'Enter NOT pressed: "{arg}" landed in: {holder}, not an input that fits '
                                             'the task, so the keyboard focus is somewhere else. Move it into the right '
