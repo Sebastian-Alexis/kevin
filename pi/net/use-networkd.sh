@@ -23,6 +23,9 @@ umask 077
   echo "ctrl_interface=DIR=/run/wpa_supplicant GROUP=netdev"
   echo "update_config=0"
   echo "country=US"
+  # while disconnected, rescan every second (default backoff left the Pi off Wi-Fi for 10 s when its first
+  # scan after boot missed the AP)
+  echo "autoscan=periodic:1"
   wpa_passphrase "$SSID" "$PSK" | grep -v '#psk=' |
     if [ -n "$FREQ" ]; then sed "s/^}$/\tscan_freq=$FREQ\n\tfreq_list=$FREQ\n}/"; else cat; fi
 } > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf

@@ -1,8 +1,13 @@
 [Unit]
 Description=ai-kvm HDMI capture (tc358743 + ustreamer)
-# Start as early as possible: setting the EDID raises hotplug, which is when the target sees the display.
+# Early boot: setting the EDID raises hotplug, and the target then needs a few seconds to (re)configure the
+# display. Starting before basic.target lets that overlap with Wi-Fi association instead of following it.
 # capture-init.sh waits for /dev/video0 itself.
+DefaultDependencies=no
+# only reads /opt (root filesystem) and writes /run (mounted first thing): no need to wait for local-fs/swap
 After=systemd-modules-load.service
+Conflicts=shutdown.target
+Before=shutdown.target
 
 [Service]
 ExecStartPre=/opt/ai-kvm/video/capture-init.sh /dev/video0
