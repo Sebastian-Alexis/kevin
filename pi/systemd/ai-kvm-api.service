@@ -1,0 +1,13 @@
+[Unit]
+Description=ai-kvm control API
+After=ai-kvm-hid.service network-online.target
+Wants=ai-kvm-hid.service network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/ai-kvm/api/server.py
+Environment=AIKVM_PORT=8080 AIKVM_STREAM=http://127.0.0.1:8081
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

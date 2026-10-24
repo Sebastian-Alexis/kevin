@@ -1,0 +1,13 @@
+[Unit]
+Description=ai-kvm USB HID gadget (keyboard + absolute mouse)
+After=sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/ai-kvm/hid/gadget-up.sh
+ExecStop=/opt/ai-kvm/hid/gadget-down.sh
+
+[Install]
+WantedBy=multi-user.target
