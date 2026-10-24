@@ -57,8 +57,11 @@ KEYMAP = {"return": "enter", "escape": "esc", "page_down": "pagedown", "page_up"
           "tab": "tab", "space": "space", "up": "up", "down": "down", "left": "left", "right": "right", "home": "home", "end": "end"}
 
 
-def combo(text):
-    return "+".join(KEYMAP.get(k.strip().lower(), k.strip().lower()) for k in text.replace(" ", "+").split("+") if k.strip())
+def combo(text, mac=True):
+    keys = [KEYMAP.get(k.strip().lower(), k.strip().lower()) for k in text.replace(" ", "+").split("+") if k.strip()]
+    if mac:   # the Mac "Delete" key is HID backspace (cmd+Delete = Move to Trash); forward delete is fn+Delete
+        keys = ["backspace" if k == "delete" else "delete" if k in ("forward_delete", "fn+delete") else k for k in keys]
+    return "+".join(keys)
 
 
 class Session:
@@ -68,6 +71,8 @@ class Session:
         self.memory, self.computer = memory, computer   # memory: base URL of agent.memory (Moss playbook), or None
         self.save_dir, self.log, self.keep_images, self.max_side = save_dir, log, keep_images, max_side
         self.gate, self.task, self.typed = gate, task, None   # gate: VLM judging where typed text landed before Enter
+        self.launcher = False    # the OS launcher (Spotlight/Raycast) was just opened: typing and Return need its pace
+        self.after_key = False   # the last action was a key combo: a UI it opened needs to settle before text is typed
         self.frame = None        # the frame the last batch settled on
         self.size = None         # size of the screenshot the model sees (pixels its coordinates refer to)
         self.n_shots = 0
@@ -121,7 +126,7 @@ class Session:
                 count = {"double_click": 2, "triple_click": 3}.get(a, 1)
                 acts.append({"type": "click", "button": btn, "count": count})
             self.kvm.actions(acts)
-            self.typed = None
+            self.typed, self.launcher = None, False
         elif a == "left_click_drag":
             sx, sy = self.frac(inp.get("start_coordinate") or inp.get("coordinate"))
             ex, ey = self.frac(inp.get("coordinate"))
@@ -131,17 +136,30 @@ class Session:
             enter = text.endswith("\n")
             text = text.rstrip("\n")
             if text:
+                if self.after_key:   # cmd+n / cmd+t / cmd+shift+n ... : the field must exist before the first character
+                    latest(self.kvm, timeout=1.0, interval=0.0, tolerance=2.0, first_delay=0.1)
+                    self.after_key = False
                 self.kvm.actions([{"type": "type", "text": text}])
                 self.typed = text
+                if self.launcher:   # the launcher searches as you type: give it time to list the app before Return
+                    time.sleep(0.6)
             if enter:
                 self.enter()
         elif a == "key":
-            c = combo(str(inp.get("text", "")))
-            if c.split("+")[-1] == "enter" and self.typed is not None:
+            c = combo(str(inp.get("text", "")), self.os_name.lower().startswith("mac"))
+            self.after_key = True
+            if c in ("cmd+space", "win", "super"):
+                # the launcher takes ~0.3 s to appear; keys sent before that are lost (seen on Raycast and Spotlight)
+                self.kvm.actions([{"type": "key", "combo": c}])
+                latest(self.kvm, timeout=1.5, interval=0.0, tolerance=2.0, first_delay=0.15)
+                time.sleep(0.2)
+                self.launcher, self.typed = True, None
+            elif c.split("+")[-1] == "enter" and self.typed is not None:
                 self.enter()
             else:
                 self.kvm.actions([{"type": "key", "combo": c}])
                 self.typed = None
+                self.launcher = False
         elif a == "scroll":
             fx, fy = self.frac(inp.get("coordinate") or [self.size[0] // 2, self.size[1] // 2])
             n = int(inp.get("scroll_amount") or 3)
@@ -192,8 +210,14 @@ class Session:
         return out
 
     def enter(self):
-        """Enter after typed text: pressed only if the text is seen in an input the task wants it in."""
+        """Enter after typed text: pressed only if the text is seen in an input the task wants it in. Text typed into
+        the OS launcher is an app name, not content: no gate, but the app gets time to come up."""
         typed, self.typed = self.typed, None
+        if self.launcher:
+            self.launcher = False
+            self.kvm.actions([{"type": "key", "combo": "enter"}])
+            latest(self.kvm, timeout=3.0, interval=0.0, tolerance=2.0, first_delay=0.4)
+            return
         if self.gate and typed:
             fits, holder = typed_where_wanted(self.kvm, self.gate, self.task, typed)
             if not fits:
