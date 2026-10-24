@@ -63,7 +63,7 @@ def fix_images(body):
                 part["image_url"]["url"] = "data:image/png;base64," + url[len("data:image;base64,"):]
 
 
-def make_handler(gw):
+def make_handler(gw, key=None):
     class Handler(BaseHTTPRequestHandler):
         def _reply(self, msg):
             body = msg.get("body")
@@ -74,10 +74,23 @@ def make_handler(gw):
             self.end_headers()
             self.wfile.write(data)
 
+        def _authorized(self):
+            """With a key configured, the client must present it (Anthropic x-api-key or OpenAI bearer style)."""
+            if key is None:
+                return True
+            got = self.headers.get("x-api-key") or self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if got == key:
+                return True
+            self.send_error(401, "invalid API key")
+            return False
+
         def do_GET(self):
-            self._reply(gw.request(self.path, method="GET"))
+            if self._authorized():
+                self._reply(gw.request(self.path, method="GET"))
 
         def do_POST(self):
+            if not self._authorized():
+                return
             raw = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             try:
                 body = json.loads(raw)
@@ -95,13 +108,20 @@ def make_handler(gw):
 def main(argv=None):
     import argparse
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--bind", default="127.0.0.1:4001")
+    p.add_argument("--bind", action="append", default=None, metavar="HOST:PORT",
+                   help="listen here (repeatable; default 127.0.0.1:4001)")
+    p.add_argument("--key-file", default=None, help="require this API key from clients (needed on any non-loopback bind)")
     a = p.parse_args(argv)
-    host, port = a.bind.rsplit(":", 1)
-    server = ThreadingHTTPServer((host, int(port)), make_handler(Gateway()))
-    print(f"serving http://{host}:{port}/v1 via omp auth-gateway stdio", file=sys.stderr, flush=True)
-    server.serve_forever()
-
+    key = open(a.key_file).read().strip() if a.key_file else None
+    binds = a.bind or ["127.0.0.1:4001"]
+    if key is None and any(not b.startswith("127.") for b in binds):
+        p.error("a non-loopback bind needs --key-file")
+    gw = Gateway()
+    servers = [ThreadingHTTPServer((h, int(pt)), make_handler(gw, key)) for h, pt in (b.rsplit(":", 1) for b in binds)]
+    for s in servers[1:]:
+        threading.Thread(target=s.serve_forever, daemon=True).start()
+    print(f"serving {' '.join(binds)} via omp auth-gateway stdio{' (key required)' if key else ''}", file=sys.stderr, flush=True)
+    servers[0].serve_forever()
 
 if __name__ == "__main__":
     main()
