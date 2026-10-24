@@ -168,6 +168,36 @@ async def run(task: str, ctx: Context, max_turns: int = 30) -> list:
     return [TextContent(type="text", text=text), picture(c.screen(fresh=True))]
 
 
+@mcp.custom_route("/run", methods=["POST"])
+async def run_http(request):
+    """Plain HTTP form of `run` for clients without MCP tool visibility (e.g. a Factory subagent using curl):
+    POST /run {"task": "..."} -> JSON {done, text, turns, seconds, steps}."""
+    from starlette.responses import JSONResponse
+    body = await request.json()
+    task = str(body.get("task", "")).strip()
+    if not task:
+        return JSONResponse({"error": "task required"}, status_code=400)
+    c = cu()
+    run_id = time.strftime("%Y%m%d-%H%M%S")
+    c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
+    os.makedirs(c.save_dir, exist_ok=True)
+    c.base, c.model, c.memory, c.computer = PLANNER_BASE, PLANNER_MODEL, MEMORY, COMPUTER
+    c.key = load_key(os.environ.get("AIKVM_PLANNER_KEY_FILE", "/etc/ai-kvm/gateway-key"))
+    steps = []
+    c.log = lambda m: steps.append(m[:300])
+    t0 = time.monotonic()
+    record({"run": len(task)})
+    try:
+        result = await asyncio.to_thread(c.run, task, int(body.get("max_turns", 30)))
+    except Exception as e:
+        result = {"done": False, "fail": f"{type(e).__name__}: {e}"}
+    finally:
+        c.log = lambda *a: None
+    threading.Thread(target=c.remember, daemon=True).start()
+    return JSONResponse({"done": bool(result.get("done")), "fail": result.get("fail"), "text": result.get("text", ""),
+                         "turns": result.get("turns"), "seconds": round(time.monotonic() - t0, 1), "steps": steps})
+
+
 @mcp.tool(description="End the run: outcome is 'success' or 'failure', summary one short paragraph of what was done "
           "and found. The run's lessons go to memory so the next run on this computer starts smarter.")
 def end(outcome: str, summary: str) -> str:
