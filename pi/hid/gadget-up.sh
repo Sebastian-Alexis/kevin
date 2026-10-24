@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Create a USB composite gadget: boot-protocol keyboard (hidg0) + absolute-pointer mouse (hidg1).
 # Absolute pointer (tablet-style) so the agent can address screen coordinates directly.
 set -eu

@@ -1,5 +1,6 @@
 """Raw HID report writers for the configfs gadget (/dev/hidg0 keyboard, /dev/hidg1 absolute mouse)."""
 import os
+import select
 import struct
 import threading
 import time
@@ -52,12 +53,29 @@ def ascii_to_key(ch):
     raise ValueError(f"unmappable character {ch!r}")
 
 
+WRITE_TIMEOUT = float(os.environ.get("AIKVM_HID_TIMEOUT", "0.5"))
+
+
+class HostNotConnected(OSError):
+    """No USB host is polling the gadget (cable unplugged or target asleep)."""
+
+
 def _write(obj, buf):
-    """Write one report on a persistent fd; reopen once if the host re-enumerated (ENODEV/ESHUTDOWN)."""
+    """Write one report on a persistent non-blocking fd.
+
+    Blocks at most WRITE_TIMEOUT for the host to poll the endpoint; raises HostNotConnected otherwise.
+    Reopens once if the host re-enumerated (ENODEV/ESHUTDOWN).
+    """
     for attempt in (0, 1):
         if getattr(obj, "fd", None) is None:
-            obj.fd = os.open(obj.dev, os.O_WRONLY | os.O_APPEND)
+            obj.fd = os.open(obj.dev, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
         try:
+            os.write(obj.fd, buf)
+            return
+        except BlockingIOError:
+            _, w, _ = select.select([], [obj.fd], [], WRITE_TIMEOUT)
+            if not w:
+                raise HostNotConnected("USB host not reading HID reports (is the target plugged in?)")
             os.write(obj.fd, buf)
             return
         except OSError:
