@@ -45,7 +45,8 @@ TOOL = {"name": "computer", "input_schema": {
         "scroll_direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
         "scroll_amount": {"type": "integer", "description": "scroll: number of wheel ticks (1 tick ~ 55 px; a screenful ~13)"},
         "duration": {"type": "number", "description": "wait: seconds"},
-        "region": {"type": "array", "items": {"type": "integer"}, "description": "zoom: [x0, y0, x1, y1] of the screenshot to see enlarged"}},
+        "region": {"type": "array", "items": {"type": "integer"}, "description": "zoom: [x0, y0, x1, y1] of the screenshot to see enlarged"},
+        "scale": {"type": "number", "description": "screenshot: return it downscaled by this factor (0.25-1) to save tokens; coordinates stay in full-size pixels"}},
     "required": ["action"]}}
 
 KEYMAP = {"return": "enter", "escape": "esc", "page_down": "pagedown", "page_up": "pageup", "super": "cmd",
@@ -150,7 +151,15 @@ class Session:
         elif a == "screenshot":
             # let the UI react to the actions before it: watch the capture until it stops changing
             self.frame = latest(self.kvm, timeout=2.0, interval=0.0, tolerance=2.0, first_delay=0.25)
-            return "", self.shot_block(self.screen())
+            img = self.screen()
+            try:
+                scale = float(inp.get("scale") or 1)
+            except (TypeError, ValueError):
+                scale = 1.0
+            if 0.2 <= scale < 1:
+                img = img.resize((round(img.width * scale), round(img.height * scale)))
+                return f"screenshot at {scale:.2f}x; coordinates for actions stay in full-size {self.size[0]}x{self.size[1]} pixels", self.shot_block(img)
+            return "", self.shot_block(img)
         elif a == "cursor_position":
             return "unknown (the KVM does not read the pointer back); move it explicitly", None
         elif a == "zoom":

@@ -81,17 +81,17 @@ def begin(task: str) -> list:
           "mouse_move, left_click_drag (start_coordinate -> coordinate), type (text; a trailing newline presses "
           "Enter), key (text = combo: cmd+l, Return, ctrl+shift+t, Escape), scroll (coordinate + scroll_direction + "
           "scroll_amount in ticks, ~13 per screenful), wait (duration seconds), zoom (region [x0,y0,x1,y1] shown "
-          "enlarged), screenshot. coordinate = [x, y] pixels of the last screenshot. Batch several calls when you "
+          "enlarged), screenshot (optional scale 0.25-1 for a smaller image; coordinates stay full-size). coordinate = [x, y] pixels of the last screenshot. Batch several calls when you "
           "are confident (e.g. four tiles then Submit; click a field, type, Enter).")
 def computer(action: str, coordinate: list[int] | None = None, text: str | None = None, scroll_direction: str | None = None,
              scroll_amount: int | None = None, duration: float | None = None, region: list[int] | None = None,
-             start_coordinate: list[int] | None = None) -> list:
+             start_coordinate: list[int] | None = None, scale: float | None = None) -> list:
     c = cu()
     if c.size is None:
         c.screen(fresh=True)
     inp = {k: v for k, v in {"action": action, "coordinate": coordinate, "text": text, "scroll_direction": scroll_direction,
                              "scroll_amount": scroll_amount, "duration": duration, "region": region,
-                             "start_coordinate": start_coordinate}.items() if v is not None}
+                             "start_coordinate": start_coordinate, "scale": scale}.items() if v is not None}
     try:
         note, image = c.do(inp)
     except Exception as e:
