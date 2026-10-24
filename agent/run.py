@@ -38,9 +38,11 @@ Each action is one short string:
  "scroll <target> @x,y -5"   negative = down; one tick is ~1/13 of the screen (about -13 for a screenful, -40 to reach the bottom of a page)
  "wait <ms>"             only for things that take longer than 2 s (the next screenshot is taken once the screen has settled anyway)
  "open_app <name>"       brings that app to the front, starting it if needed; ends the turn
+ "survey"                shows every open window at once (the OS overview) in the next screenshot; ends the turn. In that overview, "click <the window>" brings it to the front
 Rules:
 - Keystrokes go to the focused window. Right after open_app the app's shortcuts work directly (e.g. cmd+t, cmd+l), but text needs an input with focus first (that shortcut or a click on it). Otherwise, before any "type" or "key", click the exact field or window you mean in the same turn.
 - Windows overlap and look alike: whenever you are not sure the task's app is the frontmost window, open_app it.
+- What is already open is the user's workflow: when the task says a kind of app (a browser, a terminal, mail, an editor) rather than a specific one, use the one already running (the front window, the windows behind it, the apps with a dot under their Dock icon on macOS, the taskbar elsewhere); never launch, install or sign in to a different one if an open one serves. When no such window is visible, "survey" first; only when nothing suitable is open, open_app the OS default.
 - Do every step the task names, in order; never skip one (e.g. open the new tab it asks for before searching).
 - Never type into terminals, chats or apps the task does not name.
 - Only target things visible in this screenshot; for anything not visible yet, end the turn and look again. In a browser, the fastest way to reach something further down a page is "key cmd+f", "type <its text>", "key enter", "key esc" in one batch, which scrolls it into view.
@@ -124,6 +126,8 @@ def parse_action(s):
         return [{"wait": int(float(rest.strip() or 0))}]
     if verb == "open_app":
         return [{"open_app": rest.strip()}]
+    if verb == "survey":
+        return [{"survey": True}]
     raise ValueError(f"unknown action {s!r}")
 
 
@@ -147,7 +151,7 @@ def unfocused_keys(actions, focused=False, primed=False):
     before it, in this batch or ending the previous one (primed): letters typed into a page fire its one-key
     shortcuts."""
     for a in actions:
-        if "open_app" in a or any(k in a for k in CLICKS):
+        if "open_app" in a or "survey" in a or any(k in a for k in CLICKS):
             return False
         if "type" in a and not primed:
             return True
@@ -192,6 +196,8 @@ def hid_actions(actions):
             out.append({"type": "scroll", "x": fx, "y": fy, "ticks": int(ticks)})
         elif "wait" in a:
             out.append({"type": "wait", "ms": min(5000, int(a["wait"]))})
+        elif "survey" in a:
+            pass   # handled by the loop: it needs a capture between the keys
         else:
             raise ValueError(f"unknown action {a}")
     return out
@@ -202,7 +208,7 @@ def segments(actions):
     An Enter after typed text is gated: the text must be seen where the task wants it before Enter submits it (a
     chat box that happened to have focus would send it). open_app ends the batch: keys sent while an app is still
     launching would land in the previously active app."""
-    out, pending, typed = [], [], None
+    out, pending, typed = [], [], None   # "survey" ends the batch too: its overview frame is the next screenshot
 
     def flush():
         if pending:
@@ -212,6 +218,9 @@ def segments(actions):
         if "open_app" in a:
             flush()
             return out + [("open_app", str(a["open_app"]))], len(actions) - i - 1
+        if "survey" in a:
+            flush()
+            return out + [("survey", None)], len(actions) - i - 1
         if "key" in a and typed is not None and str(a["key"]).lower().split("+")[-1] in ("enter", "return"):
             flush()
             out.append(("gate", typed))
@@ -395,6 +404,25 @@ def open_app(kvm, vlm, name, os_name="macOS", hide=True):
     return hide_others()
 
 
+SURVEY_KEYS = {"macos": "ctrl+up", "windows": "win+tab", "linux": "super"}   # Mission Control / Task View / Activities
+
+
+def survey(kvm, os_name="macOS"):
+    """Open the OS overview of every window (Mission Control, Task View, Activities) and return its frame. It stays
+    open: a click on a window there brings that window to the front, which is how the next batch picks the app
+    already in use; a batch that does anything else gets an esc first (see `leave_overview`)."""
+    combo = next((v for k, v in SURVEY_KEYS.items() if os_name.lower().startswith(k[:3])), "ctrl+up")
+    kvm.actions([{"type": "key", "combo": combo}, {"type": "wait", "ms": 700}])
+    return latest(kvm, timeout=1.5, interval=0.05, tolerance=2.0, first_delay=0.1)
+
+
+def leave_overview(kvm, actions):
+    """Called for the batch after a survey: a leading click picks a window in the overview; anything else needs
+    the overview closed first."""
+    if not (actions and any(k in actions[0] for k in CLICKS)):
+        kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
+
+
 def show_all(kvm, vlm):
     """Bring back the apps open_app hid: the active app's "Show All" menu item, run through Help > Search (cmd+?)
     without touching the mouse (in the app menu, "Show All" sits just above "Quit"). Return is only pressed once
@@ -462,6 +490,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
     queue, observe = [], ""   # remaining steps of the current plan; last observation
     mac = os_name.lower().startswith("mac")
     focused = hidden = False   # focused: the app open_app raised still has keyboard focus (no click since)
+    overview = False           # the OS window overview (survey) is open: the next batch picks a window or closes it
     primed = False             # the last executed batch ended with a focus key (cmd+t, cmd+l, ...): its input has focus
     try:
         app = None if (dry_run or not isolate) else (app or task_app(vlm, task))
@@ -583,10 +612,13 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                 queue.clear()
                 continue
             done = decision.get("done") or decision.get("fail")
-            notes = [f"{dropped} later action(s) skipped: open_app ends the turn"] if dropped else []
+            notes = [f"{dropped} later action(s) skipped: open_app/survey ends the turn"] if dropped else []
             t1 = time.monotonic()
             if not dry_run:
                 blocked, settle_cap = False, settle_max
+                if overview:
+                    leave_overview(kvm, actions)
+                    overview = False
                 for kind, arg in plan:
                     if kind == "hid":
                         # a trailing wait is the model's guess at how long the UI needs: the settle below watches
@@ -605,6 +637,11 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                                             'browser, or click the input), then type again')
                             done, blocked = False, True
                             break
+                    elif kind == "survey":
+                        frame = survey(kvm, os_name)
+                        overview = True
+                        notes.insert(0, "survey: the next screenshot is the overview of every open window; click the "
+                                        "window of the app already in use to bring it to the front")
                     else:
                         focused, note, frame = open_app(kvm, vlm, arg, os_name, hide=isolate)
                         hidden = hidden or (focused and mac and isolate)

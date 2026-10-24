@@ -15,8 +15,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 from .kvm import PLACEHOLDER_SIZE, content_rect
-from .run import (CLICKS, FOCUS_KEYS, ground, latest, open_app, segments, split_actions, typed_where_wanted,
-                  unfocused_keys, yes)
+from .run import (CLICKS, FOCUS_KEYS, ground, latest, leave_overview, open_app, segments, split_actions, survey,
+                  typed_where_wanted, unfocused_keys, yes)
 
 
 class Executor:
@@ -28,6 +28,7 @@ class Executor:
         self.frame = None          # the frame the last step settled on (None: capture a fresh one)
         self.focused = False       # the app open_app raised still has keyboard focus (no click since)
         self.primed = False        # the last batch ended with a focus key: its input has focus
+        self.overview = False      # the OS window overview (survey) is open: the next batch picks a window or closes it
         self.n = 0
         if save_dir:
             os.makedirs(save_dir, exist_ok=True)
@@ -105,8 +106,11 @@ class Executor:
             report["refused"] = f"unusable action(s): {e}"
             return self._finish(report, t0)
         if dropped:
-            report["notes"].append(f"{dropped} later action(s) skipped: open_app ends the batch")
+            report["notes"].append(f"{dropped} later action(s) skipped: open_app/survey ends the batch")
         blocked, settle_cap, self.frame = False, self.settle_max, None
+        if self.overview:
+            leave_overview(self.kvm, parsed)
+            self.overview = False
         for kind, arg in plan:
             if kind == "hid":
                 if arg and arg[-1]["type"] == "wait" and arg[-1] is plan[-1][1][-1]:
@@ -120,6 +124,11 @@ class Executor:
                                               'the task. Move the keyboard focus into the right input first')
                     blocked = True
                     break
+            elif kind == "survey":
+                self.frame = survey(self.kvm, self.os_name)
+                self.overview = True
+                report["notes"].insert(0, "survey: the screenshot is the overview of every open window; click the "
+                                          "window of the app already in use to bring it to the front")
             else:
                 self.focused, note, self.frame = open_app(self.kvm, self.vlm, arg, self.os_name, hide=self.isolate)
                 report["notes"].insert(0, note)

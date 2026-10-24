@@ -24,10 +24,13 @@ from .vlm import VLM, load_key
 
 GRAMMAR = ('Actions, one string each, in order: "click <target>", "double_click <target>", "right_click <target>", '
            '"key <combo>" (cmd+l, enter, esc, cmd+shift+t ...), "type <text>", "scroll <target> -N" (negative N scrolls '
-           'the page down; 1 tick is ~55 px, a screenful ~13), "wait <ms>", "open_app <name>". A <target> is a specific '
+           'the page down; 1 tick is ~55 px, a screenful ~13), "wait <ms>", "open_app <name>", "survey" (a screenshot of every open window at once, to see which apps are in use). A <target> is a specific '
            'description of what to hit (its text and where it is: "Submit button below the grid", and the dialog or '
            'window it is in when another window shows behind: "URL field in the Add MCP Server dialog", never just '
-           '"URL input"); a separate vision model locates it on the current screen. Append "@x,y" (pixels of the last screenshot) only if you are sure.')
+           '"URL input"); a separate vision model locates it on the current screen. Append "@x,y" (pixels of the last screenshot) only if you are sure. '
+           "What is already open is the user's workflow: when a task names a kind of app (browser, terminal, mail...) use "
+           'the one already running (front window, windows behind it, Dock icons with a dot) instead of launching another; '
+           'open_app something else only when nothing suitable is open.')
 
 # reached through forwards (the host's Tailscale address), so the Host header is not the bind address
 mcp = FastMCP("ai-kvm", transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
@@ -63,7 +66,7 @@ def begin(task: str) -> list:
     folder for the frames and the event log, and returns the run id with the current screenshot."""
     ex = executor()
     run_id = time.strftime("%Y%m%d-%H%M%S")
-    ex.task, ex.n, ex.focused, ex.primed, ex.frame = task, 0, False, False, None
+    ex.task, ex.n, ex.focused, ex.primed, ex.frame, ex.overview = task, 0, False, False, None, False
     ex.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
     os.makedirs(ex.save_dir, exist_ok=True)
     with open(os.path.join(ex.save_dir, "task.txt"), "w") as f:
@@ -111,6 +114,14 @@ def act(actions: list[str], expect: str = "") -> list:
     if rep.get("executed"):
         out.append(picture(ex.screen()))
     return out
+
+
+@mcp.tool()
+def survey() -> list:
+    """Every open window at once (the OS overview): which apps and documents are already in use. Call it when the
+    task names a kind of app and no such window is visible; then act(["click <that window>"]) brings it to the
+    front (any other next action closes the overview first)."""
+    return act(["survey"], "")
 
 
 @mcp.tool()

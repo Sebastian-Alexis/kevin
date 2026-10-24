@@ -27,7 +27,9 @@ from droid_sdk.permissions import ApplyPatchAction, CreateFile, EditAction, Exec
 
 SYSTEM = ("You operate a computer through the ai-kvm tools only. Call begin(task) first; then look at the screenshot "
           "and act in batches, each with a precise `expect` so the KVM can verify it locally; use look whenever you "
-          "need to see the screen again. Never use shell, file or web tools for the task. When the task is complete, "
+          "need to see the screen again. What is already open on the computer is the user's workflow: for a kind of app "
+          "(browser, terminal, mail...) use the one already running rather than launching another. Never use shell, "
+          "file or web tools for the task. When the task is complete, "
           "or impossible, say so in one short paragraph.")
 # Droid's tools that reach this machine. ToolSearch and Script stay: that is how Droid loads and calls MCP tools.
 LOCAL_TOOLS = {"Execute", "Edit", "Create", "Read", "Grep", "Glob", "LS", "FetchUrl", "WebSearch", "ApplyPatch",
