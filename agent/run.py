@@ -311,6 +311,19 @@ def open_app(kvm, vlm, name, os_name="macOS"):
     brings them back. Returns (focused: the app is verified active, note for the model, latest frame)."""
     mac = os_name.lower().startswith("mac")
     fast = {"interval": 0.1, "tolerance": 1.5}
+    active = f'Is "{name}" (or a short form of that name) the bold active-app name right of the Apple logo?'
+
+    def hide_others():
+        kvm.actions([{"type": "key", "combo": "alt+cmd+h"}])
+        return True, (f"open_app {name}: done, the menu bar shows {name} as the active app; other apps are hidden. "
+                      "No text field has focus yet: begin the batch with the app's shortcut for the input (e.g. "
+                      "cmd+t, cmd+l) or a click on it, then type in the same batch"), \
+            latest(kvm, timeout=1.5, first_delay=0.15, **fast)
+    # Already the active app (e.g. the previous task used it): one menu-bar look instead of the launcher round trip
+    if mac:
+        reveal_menu_bar(kvm)
+        if ask_yes(kvm, vlm, active, MENU_BAR_LEFT):
+            return hide_others()
     before = kvm.screenshot()
     w, h = before.size
     kvm.actions([{"type": "key", "combo": "cmd+space" if mac else "win"}])
@@ -340,18 +353,13 @@ def open_app(kvm, vlm, name, os_name="macOS"):
     if not mac:   # no menu bar to confirm it with: keys keep needing a click on their target
         return False, f"open_app {name}: started it; click its window before typing", latest(kvm, timeout=3.0, **fast)
     reveal_menu_bar(kvm)
-    active = f'Is "{name}" (or a short form of that name) the bold active-app name right of the Apple logo?'
     deadline = time.monotonic() + 8
     while not ask_yes(kvm, vlm, active, MENU_BAR_LEFT):
         if time.monotonic() > deadline:
             return False, (f"open_app {name}: started it, but the menu bar never showed it as the active app; "
                            "other apps left visible"), kvm.screenshot()
         time.sleep(0.3)
-    kvm.actions([{"type": "key", "combo": "alt+cmd+h"}])
-    return True, (f"open_app {name}: done, the menu bar shows {name} as the active app; other apps are hidden. No "
-                  "text field has focus yet: begin the batch with the app's shortcut for the input (e.g. cmd+t, "
-                  "cmd+l) or a click on it, then type in the same batch"), latest(kvm, timeout=1.5,
-                                                                                 first_delay=0.15, **fast)
+    return hide_others()
 
 
 def show_all(kvm, vlm):
