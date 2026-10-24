@@ -8,9 +8,11 @@ Each HTTP request becomes one JSON line to the omp child process; the answer lin
 """
 import itertools
 import json
+import os
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -98,7 +100,20 @@ def make_handler(gw, key=None):
                 self.send_error(400, "body is not JSON")
                 return
             fix_images(body)
-            self._reply(gw.request(self.path, body))
+            t0 = time.monotonic()
+            msg = gw.request(self.path, body)
+            if os.environ.get("OMP_GATEWAY_TRACE"):
+                out = msg.get("body") if isinstance(msg.get("body"), dict) else {}
+                u = out.get("usage", {}) if isinstance(out, dict) else {}
+                n_img = sum(1 for m in body.get("messages", []) for c in (m.get("content") if isinstance(m.get("content"), list) else [])
+                            if isinstance(c, dict) and (c.get("type") == "image" or (c.get("type") == "tool_result" and any(isinstance(b, dict) and b.get("type") == "image" for b in (c.get("content") or [])))))
+                sys_len = len(json.dumps(body.get("system", ""))); tool_len = len(json.dumps(body.get("tools") or []))
+                if os.environ.get("OMP_GATEWAY_DUMP"):
+                    with open(os.environ["OMP_GATEWAY_DUMP"], "a") as f:
+                        f.write(json.dumps({"tools": [t.get("name") for t in body.get("tools") or []], "system": body.get("system"), "max_tokens": body.get("max_tokens"), "n_msgs": len(body.get("messages") or [])}) + "\n")
+                sys.stderr.write(f"trace {self.path} model={body.get('model')} {time.monotonic() - t0:.2f}s in={u.get('input_tokens')} cached={u.get('cache_read_input_tokens')} out={u.get('output_tokens')} system_chars={sys_len} tools_chars={tool_len} "
+                                 f"tools={len(body.get('tools') or [])} msgs={len(body.get('messages') or [])} imgs={n_img} max_tokens={body.get('max_tokens')} stop={out.get('stop_reason') if isinstance(out, dict) else ''}\n")
+            self._reply(msg)
 
         def log_message(self, fmt, *args):
             sys.stderr.write("omp_gateway: " + fmt % args + "\n")

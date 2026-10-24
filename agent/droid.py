@@ -116,6 +116,8 @@ async def run_task(task, mcp_url, model, report, log=print):
     t0 = time.monotonic()
     async with Session(cwd=os.getcwd(), model=model, config=cfg,
                        interactions=InteractionHandlers(on_permission=permission)) as session:
+        # a manually set title skips Droid's own title-generation call (a 4 s model round trip per run)
+        await session.rename(f"ai-kvm: {task[:60]}")
         report.event("session", id=session.id)
         async with session.stream(task) as stream:
             async for m in stream:

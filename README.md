@@ -93,8 +93,12 @@ The computer under control is also exposed as an MCP server running **on the KVM
 So a Droid session drives the computer exactly like `python3 -m agent` does (same tool, same rules, same Enter
 gate); the grounded `act` path is only in `agent/run.py`. Only `screenshot`/`zoom` return an image, so a batch of
 actions costs one capture like the direct loop; `end` hands the lessons to memory in the background. Measured on
-the same task (new tab, read the top of Hacker News): direct 15 s; through Droid ~25 s, of which the KVM side is
-~4 s (including the window overview `begin` returns) and the rest is Droid's own per-session boot (~6 s before the first tool call) and its closing turn.
+the same task (new tab, read the top of Hacker News) with the gateway's per-request trace (`OMP_GATEWAY_TRACE=1`):
+direct 15 s in 2 model calls; through Droid ~25 s in 6 model calls. The KVM side is ~4 s either way. Droid's extra
+is structural: it wraps every MCP call in its `Script` tool (12 KB of tool schemas on every request, code instead
+of a tool call), adds a title-generation call, and always spends a closing turn after the last tool result.
+Per screenshot, the next action lands on the computer 2-5 s later on both paths: 90% of that is the model
+deciding (Opus 5.5; Sonnet 5.5 is ~1.5-2 s), the KVM adds ~0.1 s to act and 0.25-2 s to let the screen settle.
 
 The rails live inside the server, so they bind every planner the same way: off-screen points are refused with an
 error result, and Enter after typed text is gated on where the text landed (judged by qwen27 on the controller,
