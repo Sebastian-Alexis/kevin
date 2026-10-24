@@ -6,12 +6,14 @@ frame). The absolute HID pointer spans exactly that picture, so 0-1000 maps stra
 """
 import io
 import json
+import time
 import urllib.request
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
 BAR_LEVEL = 24       # max channel value of letterbox/pillarbox pixels (limited-range black is 16, plus JPEG noise)
 MIN_CONTENT = 0.5     # never crop below half the frame (protects dark UIs from being "cropped")
+PLACEHOLDER_SIZE = (640, 480)   # ustreamer's "NO SIGNAL" frame
 
 
 class KVM:
@@ -32,6 +34,27 @@ class KVM:
                                      {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=max(self.timeout, 60)) as r:
             return json.load(r)
+
+
+def mean_diff(a, b):
+    """Mean absolute difference of two same-size frames on a 0-255 scale (a static screen's JPEG noise is ~1)."""
+    return ImageStat.Stat(ImageChops.difference(a, b).convert("L")).mean[0]
+
+
+def settled(kvm, timeout=6.0, interval=0.4, tolerance=2.0, first_delay=0.0):
+    """Latest frame once two consecutive frames are nearly identical (animations, page loads and display
+    transitions done), else the last frame seen at timeout. ustreamer's NO SIGNAL placeholder counts as None."""
+    time.sleep(first_delay)
+    prev = None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        img = kvm.screenshot()
+        img = None if img.size == PLACEHOLDER_SIZE else img
+        if img is not None and prev is not None and img.size == prev.size and mean_diff(img, prev) < tolerance:
+            return img
+        prev = img
+        time.sleep(interval)
+    return prev
 
 
 def content_rect(img):

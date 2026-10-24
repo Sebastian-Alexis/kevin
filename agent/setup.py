@@ -19,11 +19,10 @@ import time
 
 from PIL import ImageChops, ImageStat
 
-from .kvm import KVM, content_rect, to_hid
-from .run import SYSTEM, point
+from .kvm import KVM, PLACEHOLDER_SIZE, content_rect, settled, to_hid
+from .run import SYSTEM, point, yes
 from .vlm import VLM, load_key
 
-PLACEHOLDER_SIZE = (640, 480)   # ustreamer's "NO SIGNAL" frame
 GROUND = ('Locate %s. If it is not visible in this screenshot, reply exactly {"point_2d": null}. '
           'Otherwise reply only JSON {"point_2d": [x, y]} with coordinates normalized to 0-1000.')
 DEBUG_DIR = os.environ.get("AIKVM_SETUP_DEBUG", "/tmp/aikvm-setup")
@@ -102,20 +101,6 @@ def pillarboxed(img):
     return (x1 - x0) / (y1 - y0) < 1.70
 
 
-def settled(kvm, timeout=6.0, interval=0.4, tolerance=2.0):
-    """Wait until two consecutive frames are nearly identical (display transitions and animations done)."""
-    prev = None
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        img = frame(kvm)
-        if img is not None and prev is not None and img.size == prev.size:
-            if ImageStat.Stat(ImageChops.difference(img, prev).convert("L")).mean[0] < tolerance:
-                return img
-        prev = img
-        time.sleep(interval)
-    return prev
-
-
 def find(kvm, vlm, target, check, log, timeout=6.0, retry=None):
     """locate() whose answer must pass check(x, y); a failed check means the model guessed at something not on
     screen (e.g. a menu that didn't open), so take a fresh screenshot and ask again, optionally running retry()."""
@@ -150,10 +135,7 @@ def ask_yes(kvm, vlm, question, box=None, scale=2):
         w, h = img.size
         img = img.crop((int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h)))
         img = img.resize((img.width * scale, img.height * scale))
-    text, _, _ = vlm.chat([{"role": "system", "content": SYSTEM},
-                           {"role": "user", "content": [vlm.image_part(img),
-                                                        {"type": "text", "text": question + " Answer only yes or no."}]}], 4)
-    return text.strip().lower().startswith("yes")
+    return yes(vlm, img, question)
 
 
 SETTINGS_FRONT = 'Does this menu bar show "System Settings" as the active app name next to the Apple logo?'

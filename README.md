@@ -44,11 +44,28 @@ shutdown). Automatic new-display trials: 5/5 and 3/3 after the last fixes.
 
 ## Using it
 
-    python3 -m agent "In the web browser, search for raspberry pi kvm"
+    python3 -m agent "In the Helium web browser, open a new tab and search for raspberry pi kvm"
 
 One model call per step: the model sees the screen picture (pillarbox removed) and replies with batched
-actions; clicks carry a target description and a 0-1000 `point_2d`. Typical step: 1.2-2 s of model time plus
-execution. `--dry-run` asks the model without sending input; `--save-dir` keeps every frame.
+actions, constrained to a JSON schema (vLLM structured outputs) so every reply parses; clicks carry a target
+description and a 0-1000 `point_2d`. Typical step: 1.3-2 s of model time plus execution. After acting, the
+next screenshot is taken once the screen stops changing (page loads get the time they need, at most
+`--settle-max`). `--dry-run` asks the model without sending input; `--save-dir` keeps every frame.
+
+Keystrokes are what can do damage on someone's computer, so:
+
+- If the task names an app, it is brought to the front before the first look, through the OS launcher
+  (Spotlight, or Raycast/Alfred when they own cmd+space; the Start/Activities search elsewhere). Nothing is
+  typed until a launcher is seen open, and Enter is pressed only when its top result is that app. On macOS
+  every other app is then hidden (Hide Others) until the run ends, when Help > Search runs "Show All". The model
+  can call `open_app` itself later.
+- Keys need a click on their target earlier in the same batch, unless the app was just opened (it has focus).
+- An Enter after typed text is gated: the text must be seen in an input that fits the task, so a chat box or
+  terminal that happened to have focus never gets it sent.
+- The same batch three times in a row (refused ones included) ends the run.
+
+This costs ~3 s to open the app, ~3-4 s to show the other apps again and ~0.8 s per gated Enter: a search task
+from a cluttered desktop (terminal floating on top, App Store in front of the browser) takes 13-16 s end to end.
 
 The Pi's own API (`pi/api/server.py`) is usable directly: `GET /health`, `GET /screenshot`,
 `POST /actions` with move/click/drag/scroll/type/key/wait batches.

@@ -41,9 +41,12 @@ class VLM:
         data = base64.b64encode(buf.getvalue()).decode()
         return {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + data}}
 
-    def chat(self, messages, max_tokens=200):
+    def chat(self, messages, max_tokens=200, schema=None):
+        """(reply text, usage, seconds). schema: JSON schema the reply is constrained to (vLLM structured outputs)."""
         body = {"model": self.model, "messages": messages, "max_tokens": max_tokens, "temperature": 0,
                 "chat_template_kwargs": {"enable_thinking": False}}
+        if schema:
+            body["response_format"] = {"type": "json_schema", "json_schema": {"name": "reply", "schema": schema}}
         headers = {"Content-Type": "application/json"}
         if self.key:
             headers["Authorization"] = "Bearer " + self.key
