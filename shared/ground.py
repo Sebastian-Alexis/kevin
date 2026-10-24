@@ -24,8 +24,11 @@ def target(intent):
 
 
 def junk(intent):
-    """Labels no planner would name: bare numbers/values, tooltips and sentences, empty quotes."""
+    """Labels no planner would name: bare numbers/values, tooltips and sentences, empty quotes, markup and object
+    reprs (a literal "<audio>" is also a media placeholder to LLaMA-Factory and breaks training)."""
     t = target(intent)
+    if re.search(r"<[^>]*>", t):
+        return True
     q = QUOTED.search(t)
     text = q.group(1) if q else t
     if not text.strip() or len(text) > 60 or len(text.split()) > 8:

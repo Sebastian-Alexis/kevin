@@ -66,6 +66,9 @@ def export(a):
     keep, stats = {"train": [], "val": []}, Counter()
     for r in rows:
         t = teacher.get(r["id"])
+        if ground.junk(r["target"]):   # filters added after the pool was built
+            stats["junk target"] += 1
+            continue
         if t is None:
             stats["no teacher answer"] += 1
             continue
