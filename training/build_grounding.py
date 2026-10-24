@@ -2,7 +2,7 @@
 
   python training/build_grounding.py pool                       # data/grounding/pool.jsonl (+ split per frame)
   python training/eval_point.py --data pool --model teacher --out data/grounding/teacher_pool.jsonl
-  python training/build_grounding.py export --teacher data/grounding/teacher_pool.jsonl
+  python training/build_grounding.py export --teacher data/grounding/teacher_pool.jsonl [teacher_described.jsonl ...]
 
 Every kept sample has a ground-truth element box (OS-Atlas / DOM / AX). The teacher (Qwen3.8-27B) is the filter:
 a sample stays only if the teacher's point lands inside that box, which drops ambiguous and mislabelled targets
@@ -23,7 +23,7 @@ from common import DATA, iter_shards  # noqa: E402
 from shared import ground  # noqa: E402
 
 OUT = DATA / "grounding"
-SOURCES = ("osatlas", "web", "ax")
+SOURCES = ("osatlas", "web", "ax", "groundcua")
 
 
 def val_frame(key, frac):
@@ -53,6 +53,22 @@ def pool(a):
     print("dropped:", dict(drop))
 
 
+def sample(a):
+    """Rows for the teacher to describe: n per source, preferring rows whose text target the teacher already hit."""
+    hit = {r["id"] for path in a.prefer for r in map(json.loads, open(path)) if r["hit"]} if a.prefer else set()
+    rows = [json.loads(line) for line in open(OUT / "pool.jsonl")]
+    random.Random(1).shuffle(rows)
+    out = []
+    for spec in a.per_source.split(","):
+        src, n = spec.split("=")
+        cand = sorted((r for r in rows if r["source"] == src), key=lambda r: r["id"] not in hit)
+        out += cand[:int(n)]
+    random.Random(2).shuffle(out)
+    with open(OUT / f"{a.name}.jsonl", "w") as f:
+        f.writelines(json.dumps(r) + "\n" for r in out)
+    print(f"{len(out)} rows -> {OUT / a.name}.jsonl", dict(Counter(r["source"] for r in out)))
+
+
 def sharegpt(r):
     cx, cy = (r["bbox"][0] + r["bbox"][2]) / 2, (r["bbox"][1] + r["bbox"][3]) / 2
     return {"messages": [{"role": "user", "content": "<image>" + ground.PROMPT.format(target=r["target"])},
@@ -61,22 +77,26 @@ def sharegpt(r):
 
 
 def export(a):
-    teacher = {r["id"]: r for r in map(json.loads, open(a.teacher))}
-    rows = [json.loads(line) for line in open(OUT / "pool.jsonl")]
-    keep, stats = {"train": [], "val": []}, Counter()
-    for r in rows:
-        t = teacher.get(r["id"])
-        if ground.junk(r["target"]):   # filters added after the pool was built
-            stats["junk target"] += 1
-            continue
-        if t is None:
-            stats["no teacher answer"] += 1
-            continue
-        if not t["hit"]:
-            stats[f"teacher missed ({r['source']})"] += 1
-            continue
-        keep[r["split"]].append(r)
-        stats[f"kept ({r['source']})"] += 1
+    """Keep every teacher-checked row (eval_point.py --out files carry the full row) whose point hit the true box."""
+    keep, stats, seen = {"train": [], "val": []}, Counter(), set()
+    for path in a.teacher:
+        for r in map(json.loads, open(path)):
+            kind = r.get("style", "text")
+            if r["id"] in seen:
+                continue
+            seen.add(r["id"])
+            if kind == "text" and ground.junk(r["target"]):   # filters added after the pool was built
+                stats["junk target"] += 1
+            elif not r["hit"]:
+                stats[f"teacher missed ({r['source']}, {kind})"] += 1
+            else:
+                keep[r["split"]].append(r)
+                stats[f"kept ({r['source']}, {kind})"] += 1
+    for r in map(json.loads, open(OUT / "pool.jsonl")):   # human-verified sources go in without a teacher check
+        if r["source"] in a.trust and r["id"] not in seen and not ground.junk(r["target"]):
+            seen.add(r["id"])
+            keep[r["split"]].append(r)
+            stats[f"kept ({r['source']}, trusted)"] += 1
     random.Random(0).shuffle(keep["train"])
     files = {"ground_train": keep["train"], "ground_val": keep["val"]}
     exp = DATA / "export"
@@ -99,10 +119,15 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("pool")
     p.add_argument("--val-frac", type=float, default=0.08)
+    sp = sub.add_parser("sample")
+    sp.add_argument("--per-source", required=True, help="e.g. groundcua=2500,osatlas=3000,web=1500")
+    sp.add_argument("--prefer", nargs="*", help="teacher files: rows it already hit come first")
+    sp.add_argument("--name", default="describe_in")
     e = sub.add_parser("export")
-    e.add_argument("--teacher", required=True)
+    e.add_argument("--teacher", nargs="+", required=True, help="eval_point.py --out files from the teacher")
+    e.add_argument("--trust", nargs="*", default=[], help="sources taken from the pool without a teacher check")
     a = ap.parse_args()
-    {"pool": pool, "export": export}[a.cmd](a)
+    {"pool": pool, "sample": sample, "export": export}[a.cmd](a)
 
 
 if __name__ == "__main__":
