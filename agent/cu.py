@@ -179,6 +179,18 @@ class Session:
         self.frame = None
         return "ok", None
 
+    def remember(self):
+        """Send the finished run's trajectory to memory (call after reporting the result)."""
+        if not getattr(self, "pending", None):
+            return {}
+        task, outcome, trajectory, recalled = self.pending
+        self.pending = None
+        out = learn(self.memory, task, self.computer, outcome, trajectory, recalled)
+        if out.get("learned") or out.get("quarantined"):
+            self.log("memory: learned " + " | ".join(l["text"][:80] for l in out.get("learned", []))
+                     + (" ; quarantined " + ", ".join(q["id"] for q in out["quarantined"]) if out.get("quarantined") else ""))
+        return out
+
     def enter(self):
         """Enter after typed text: pressed only if the text is seen in an input the task wants it in."""
         typed, self.typed = self.typed, None
@@ -269,13 +281,10 @@ class Session:
             self.log(f"turn {turn}: model {t_model:.2f}s ({u.get('input_tokens')}+{u.get('cache_read_input_tokens')} cached "
                      f"+{u.get('output_tokens')} out) act+settle {time.monotonic() - t1:.2f}s | {text[:80]} -> "
                      + json.dumps([c["input"] for c in calls])[:300])
-        if self.memory:
-            done = result.get("done") and not any(w in result.get("text", "").lower()[:200] for w in ("couldn't", "could not", "unable", "cannot"))
-            out = learn(self.memory, task, self.computer, "success" if done else "failure",
-                        "\n".join(trajectory), [n["id"] for n in notes])
-            if out.get("learned") or out.get("quarantined"):
-                self.log("memory: learned " + " | ".join(l["text"][:80] for l in out.get("learned", []))
-                         + (" ; quarantined " + ", ".join(q["id"] for q in out["quarantined"]) if out.get("quarantined") else ""))
+        # the lessons of this run go to memory after the result is out: a slow memory service never shows in the run time
+        self.pending = (task, "success" if result.get("done") and not any(
+            w in result.get("text", "").lower()[:200] for w in ("couldn't", "could not", "unable", "cannot")) else "failure",
+                        "\n".join(trajectory), [n["id"] for n in notes]) if self.memory else None
         return result
 
 
@@ -300,7 +309,8 @@ def main(argv=None):
     t0 = time.monotonic()
     result = s.run(a.task, a.max_turns)
     result["seconds"] = round(time.monotonic() - t0, 1)
-    print(json.dumps(result)[:800])
+    print(json.dumps(result)[:800], flush=True)
+    s.remember()
     return 0 if result.get("done") else 1
 
 
