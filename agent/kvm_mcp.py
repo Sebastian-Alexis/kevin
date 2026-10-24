@@ -12,6 +12,7 @@ import base64
 import io
 import json
 import os
+import threading
 import time
 
 from mcp.server.fastmcp import FastMCP
@@ -21,7 +22,7 @@ from mcp.types import ImageContent, TextContent
 from .cu import SYSTEM, Session
 from .kvm import KVM, content_rect
 from .memory import learn, notes_text, recall
-from .run import latest, survey
+from .run import latest, survey as survey_frame
 from .vlm import VLM, load_key
 
 # reached through forwards (the host's Tailscale address), so the Host header is not the bind address
@@ -58,10 +59,9 @@ def picture(img):
     return ImageContent(type="image", data=base64.b64encode(buf.getvalue()).decode(), mimeType="image/jpeg")
 
 
-@mcp.tool(description="Start a run for `task` (call once first). Returns the run id, the rules of this computer, "
-          "the current screenshot, then the overview of every open window (what the user already has running: use "
-          "those apps for the task; launch something else only when nothing suitable is open). Coordinates for "
-          "`computer` are pixels of the screenshots this returns.")
+@mcp.tool(description="Start a run for `task` (call once first). Returns the run id, the rules of this computer and "
+          "the current screenshot. Coordinates for `computer` are pixels of the screenshots. If the task names a kind "
+          "of app and none is visible, call survey() to see every open window before launching anything.")
 def begin(task: str) -> list:
     c = cu()
     run_id = time.strftime("%Y%m%d-%H%M%S")
@@ -69,22 +69,32 @@ def begin(task: str) -> list:
     c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
     os.makedirs(c.save_dir, exist_ok=True)
     img = c.screen(fresh=True)
-    frame = survey(c.kvm, c.os_name)
-    c.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
-    c.frame = None
-    ov = frame.crop(content_rect(frame))
     record({"begin": len(task), "size": list(img.size)})   # the task text may carry credentials: not persisted
     c.notes = recall(MEMORY, task, COMPUTER) if MEMORY else []
     c.trajectory = []
     text = (f"run {run_id} started. {SYSTEM.format(os=c.os_name)}\n\n" + (notes_text(c.notes) + "\n\n" if c.notes else "")
-            + f"First image: the screen ({img.size[0]}x{img.size[1]}); second image: the overview of every open window "
-            "(now closed again). Call end(outcome, summary) when the task is complete or impossible.")
+            + f"The screen is {img.size[0]}x{img.size[1]}. Batch every action you are confident about in one turn; only "
+            "screenshot/zoom return an image, so end a batch with a screenshot when you need to see the result. Call "
+            "end(outcome, summary) when the task is complete or impossible.")
     c.shot_block(img)   # saves shot01.jpg in the run folder
-    return [TextContent(type="text", text=text), picture(img), picture(ov)]
+    return [TextContent(type="text", text=text), picture(img)]
 
 
-@mcp.tool(description="The standard computer tool: one action on the computer, then the screenshot after it once "
-          "the screen has settled. action: left_click, double_click, triple_click, right_click, middle_click, "
+@mcp.tool(description="The overview of every open window on the computer (Mission Control), closed again before "
+          "returning: which apps the user already has running. Use those for the task; launch something else only "
+          "when nothing suitable is open.")
+def survey() -> list:
+    c = cu()
+    frame = survey_frame(c.kvm, c.os_name)
+    c.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
+    c.frame = None
+    ov = frame.crop(content_rect(frame))
+    record({"survey": True})
+    return [TextContent(type="text", text="every open window, overview now closed"), picture(ov)]
+
+
+@mcp.tool(description="The standard computer tool: one action on the computer. Only screenshot and zoom return an "
+          "image: batch your actions and end the batch with a screenshot (the screen is allowed to settle first). action: left_click, double_click, triple_click, right_click, middle_click, "
           "mouse_move, left_click_drag (start_coordinate -> coordinate), type (text; a trailing newline presses "
           "Enter), key (text = combo: cmd+l, Return, ctrl+shift+t, Escape), scroll (coordinate + scroll_direction + "
           "scroll_amount in ticks, ~13 per screenful), wait (duration seconds), zoom (region [x0,y0,x1,y1] shown "
@@ -104,14 +114,15 @@ def computer(action: str, coordinate: list[int] | None = None, text: str | None 
     except Exception as e:
         record({"computer": {**inp, "text": "<redacted>"} if action == "type" else inp, "error": str(e)})
         return [TextContent(type="text", text=f"error: {e}"), picture(c.screen(fresh=True))]
-    if image is None:
-        c.frame = latest(c.kvm, timeout=2.0, interval=0.0, tolerance=2.0, first_delay=0.25)
-        image = c.shot_block(c.screen())
     record({"computer": {**inp, "text": f"<redacted: {len(inp['text'])} chars>"} if action == "type" else inp, "note": note})
     if hasattr(c, "trajectory"):
         c.trajectory.append(json.dumps({**inp, "text": "<typed>"} if action == "type" else inp))
-    return [TextContent(type="text", text=note or "ok"),
-            ImageContent(type="image", data=image["source"]["data"], mimeType="image/jpeg")]
+    out = [TextContent(type="text", text=note or "ok")]
+    if image is not None:
+        out.append(ImageContent(type="image", data=image["source"]["data"], mimeType="image/jpeg"))
+    else:
+        c.frame = None   # the next screenshot captures fresh (and settles) rather than reusing a pre-action frame
+    return out
 
 
 @mcp.tool(description="End the run: outcome is 'success' or 'failure', summary one short paragraph of what was done "
@@ -119,11 +130,12 @@ def computer(action: str, coordinate: list[int] | None = None, text: str | None 
 def end(outcome: str, summary: str) -> str:
     c = cu()
     record({"end": outcome, "summary": summary})
-    out = learn(MEMORY, c.task, COMPUTER, "success" if outcome == "success" else "failure",
-                summary + "\nactions: " + " ".join(getattr(c, "trajectory", [])), [n["id"] for n in getattr(c, "notes", [])]) if MEMORY else {}
+    if MEMORY:   # lessons are distilled in the background: the planner's reply must not wait for them
+        args = (MEMORY, c.task, COMPUTER, "success" if outcome == "success" else "failure",
+                summary + "\nactions: " + " ".join(getattr(c, "trajectory", [])), [n["id"] for n in getattr(c, "notes", [])])
+        threading.Thread(target=learn, args=args, daemon=True).start()
     c.notes, c.trajectory = [], []
-    learned = out.get("learned", [])
-    return f"run ended ({outcome}); memory learned {len(learned)} note(s)" + (": " + " | ".join(l["text"] for l in learned) if learned else "")
+    return f"run ended ({outcome})"
 
 
 if __name__ == "__main__":
