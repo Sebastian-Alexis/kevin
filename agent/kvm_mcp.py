@@ -1,12 +1,12 @@
-"""MCP server that is the whole of what a planner (Droid) may touch: the target computer's screen, mouse and
-keyboard through the KVM, with the rails of agent.executor around every action. It runs ON the KVM, so the
-planner's machine needs nothing but an MCP client; the grounder and verifier are local models reached over HTTP.
+"""MCP server that is the whole of what a planner (Droid) may touch: the target computer through the KVM, as the
+standard `computer` tool (the same loop as `python3 -m agent`, agent/cu.py). It runs ON the KVM, so the planner's
+machine needs nothing but an MCP client; the Enter gate's judge is a local model reached over HTTP.
 
     python3 -m agent.kvm_mcp --http 0.0.0.0:8090     # on the Pi (systemd: ai-kvm-mcp.service); MCP at /mcp
     python3 -m agent.kvm_mcp                         # stdio, for a planner on this machine
 
-Tools: `look` (screenshot), `act` (one batch of actions + what to expect afterwards; verified locally), `open_app`.
-Every call is appended to $AIKVM_EVENTS (JSON lines), the planner's run report reads it to show what was done.
+Tools: `begin(task)` (run folder + first screenshot + overview of open windows), `computer(action, ...)`.
+Every call is appended to the run's events.jsonl; frames are saved next to it.
 """
 import base64
 import io
@@ -18,140 +18,73 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ImageContent, TextContent
 
-from .cu import Session as CU
-from .executor import Executor
-from .kvm import KVM
+from .cu import SYSTEM, Session
+from .kvm import KVM, content_rect
+from .run import latest, survey
 from .vlm import VLM, load_key
-
-GRAMMAR = ('Actions, one string each, in order: "click <target>", "double_click <target>", "right_click <target>", '
-           '"key <combo>" (cmd+l, enter, esc, cmd+shift+t ...), "type <text>", "scroll <target> -N" (negative N scrolls '
-           'the page down; 1 tick is ~55 px, a screenful ~13), "wait <ms>", "open_app <name>", "survey" (a screenshot of every open window at once, to see which apps are in use). A <target> is a specific '
-           'description of what to hit (its text and where it is: "Submit button below the grid", and the dialog or '
-           'window it is in when another window shows behind: "URL field in the Add MCP Server dialog", never just '
-           '"URL input"); a separate vision model locates it on the current screen. Append "@x,y" (pixels of the last screenshot) only if you are sure. '
-           "What is already open is the user's workflow: when a task names a kind of app (browser, terminal, mail...) use "
-           'the one already running (front window, windows behind it, Dock icons with a dot) instead of launching another; '
-           'open_app something else only when nothing suitable is open.')
 
 # reached through forwards (the host's Tailscale address), so the Host header is not the bind address
 # stateless: no per-client session ids, so a server restart (deploy) never strands a connected app with
-# "Session not found"; the run state lives in the Executor, keyed by begin()
+# "Session not found"; the run state lives in the Session, keyed by begin()
 mcp = FastMCP("ai-kvm", stateless_http=True,
               transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
-_ex = None
-_events = os.environ.get("AIKVM_EVENTS")
-
-
-def executor():
-    global _ex
-    if _ex is None:
-        key = load_key(os.environ.get("AIKVM_LLM_KEY_FILE", "/etc/ai-kvm/llm-key"))
-        rails = VLM(os.environ.get("AIKVM_LLM_BASE", "http://10.42.0.1:8000/v1"),
-                    os.environ.get("AIKVM_LLM_MODEL", "qwen27"), key=key)
-        g = os.environ.get("AIKVM_GROUNDER", "http://10.42.0.1:8010/v1")
-        grounder = {"url": g.rstrip("/") + "/chat/completions", "model": os.environ.get("AIKVM_GROUNDER_MODEL", "holo4"),
-                    "key": key} if g else None
-        _ex = Executor(KVM(os.environ.get("AIKVM_URL", "http://127.0.0.1:8080")), rails, grounder=grounder,
-                       os_name=os.environ.get("AIKVM_OS", "macOS"), save_dir=os.environ.get("AIKVM_SAVE_DIR"),
-                       isolate=False, task=os.environ.get("AIKVM_TASK", ""), log=record)
-    return _ex
-
-
-def record(event):
-    path = os.path.join(_ex.save_dir, "events.jsonl") if _ex and _ex.save_dir else None
-    if path:
-        with open(path, "a") as f:
-            f.write(json.dumps({"t": time.time(), **event}) + "\n")
-
-
-@mcp.tool()
-def begin(task: str) -> list:
-    """Start a run for `task` (call once first): resets the step counter and keyboard-focus tracking, opens a run
-    folder for the frames and the event log, and returns the run id with TWO screenshots: the current screen, then
-    the overview of every open window (what the user already has running: use those apps for the task; open_app
-    something else only when nothing suitable is open). The overview is closed again before this returns."""
-    ex = executor()
-    if ex.overview:   # a previous run ended in the window overview
-        ex.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 300}])
-    run_id = time.strftime("%Y%m%d-%H%M%S")
-    ex.task, ex.n, ex.focused, ex.primed, ex.frame, ex.overview = task, 0, False, False, None, False
-    ex.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
-    os.makedirs(ex.save_dir, exist_ok=True)
-    with open(os.path.join(ex.save_dir, "task.txt"), "w") as f:
-        f.write(task + "\n")
-    img = ex.screen(fresh=True)
-    ex.save(img, "step00.jpg")
-    from .kvm import content_rect
-    from .run import survey as overview_of
-    frame = overview_of(ex.kvm, ex.os_name)
-    ex.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
-    ex.frame = None   # the next look/act captures the normal screen, not the overview
-    ov = frame.crop(content_rect(frame))
-    ex.save(ov, "step00-overview.jpg")
-    record({"begin": task, "size": list(img.size)})
-    return [TextContent(type="text", text=f"run {run_id} started; screenshot {img.size[0]}x{img.size[1]}, then the "
-                        "overview of every open window (which apps are already in use: prefer them)"),
-            picture(img), picture(ov)]
-
-
-def picture(img):
-    buf = io.BytesIO()
-    img.save(buf, "JPEG", quality=80)
-    return ImageContent(type="image", data=base64.b64encode(buf.getvalue()).decode(), mimeType="image/jpeg")
-
-
-@mcp.tool()
-def look() -> list:
-    """Current screenshot of the computer under control (fresh capture). Coordinates in it are pixels."""
-    ex = executor()
-    img = ex.screen(fresh=True)
-    path = ex.save(img, f"look{int(time.time())}.jpg")
-    record({"look": path, "size": list(img.size)})
-    return [TextContent(type="text", text=f"screenshot {img.size[0]}x{img.size[1]}"), picture(img)]
-
-
-@mcp.tool(description="Perform one batch of actions on the computer, then check the screen for `expect`. " + GRAMMAR
-          + " `expect` is what the screen should show once the batch has taken effect (a cheap local model checks "
-          "it: a failed check returns the screenshot so you can re-plan). Returns what was done, what was refused "
-          "and why, the verdict, and the screenshot after the batch.")
-def act(actions: list[str], expect: str = "") -> list:
-    ex = executor()
-    rep = ex.step(actions, expect)
-    lines = []
-    if rep.get("refused"):
-        lines.append(f"REFUSED (nothing executed): {rep['refused']}")
-    else:
-        lines.append(f"executed {len(rep['actions'])} action(s) in {rep['seconds']}s")
-    if rep.get("grounded"):
-        lines.append("located: " + ", ".join(f"{t} -> {p}" for t, p in rep["grounded"].items()))
-    lines += rep.get("notes", [])
-    if "verified" in rep:
-        lines.append(f'expectation "{expect}": {"confirmed" if rep["verified"] else "NOT seen on screen"}')
-    out = [TextContent(type="text", text="\n".join(lines))]
-    if rep.get("executed"):
-        out.append(picture(ex.screen()))
-    return out
-
-
 _cu = None
 
 
 def cu():
-    """The native computer-tool executor, sharing the KVM with the Executor (begin's run folder for its frames)."""
     global _cu
-    ex = executor()
     if _cu is None:
-        _cu = CU(ex.kvm, "", "", None, ex.os_name, save_dir=None, log=lambda *a: None, gate=ex.vlm)
-    _cu.save_dir, _cu.task = ex.save_dir, ex.task
+        key = load_key(os.environ.get("AIKVM_LLM_KEY_FILE", "/etc/ai-kvm/llm-key"))
+        gate = VLM(os.environ.get("AIKVM_LLM_BASE", "http://10.42.0.1:8000/v1"), os.environ.get("AIKVM_LLM_MODEL", "qwen27"), key=key)
+        _cu = Session(KVM(os.environ.get("AIKVM_URL", "http://127.0.0.1:8080")), "", "", None,
+                      os.environ.get("AIKVM_OS", "macOS"), save_dir=None, log=lambda *a: None, gate=gate)
     return _cu
 
 
-@mcp.tool(description="Native computer use, the standard `computer` tool: one action on the computer (left_click, "
-          "double_click, right_click, mouse_move, left_click_drag, type, key, scroll, wait, zoom, screenshot), then the "
-          "screenshot after it. `coordinate` is [x, y] in pixels of the last screenshot; `text` is the text to type or "
-          "the key combo (cmd+l, Return, ctrl+shift+t); scroll takes scroll_direction + scroll_amount (ticks, ~13 per "
-          "screenful); zoom takes region [x0, y0, x1, y1]; wait takes duration (seconds). Prefer it over act when you "
-          "know the exact pixel; use look/survey for a fresh view.")
+def record(event):
+    c = cu()
+    if c.save_dir:
+        with open(os.path.join(c.save_dir, "events.jsonl"), "a") as f:
+            f.write(json.dumps({"t": time.time(), **event}) + "\n")
+
+
+def picture(img):
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=85)
+    return ImageContent(type="image", data=base64.b64encode(buf.getvalue()).decode(), mimeType="image/jpeg")
+
+
+@mcp.tool(description="Start a run for `task` (call once first). Returns the run id, the rules of this computer, "
+          "the current screenshot, then the overview of every open window (what the user already has running: use "
+          "those apps for the task; launch something else only when nothing suitable is open). Coordinates for "
+          "`computer` are pixels of the screenshots this returns.")
+def begin(task: str) -> list:
+    c = cu()
+    run_id = time.strftime("%Y%m%d-%H%M%S")
+    c.task, c.typed, c.frame = task, None, None
+    c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
+    os.makedirs(c.save_dir, exist_ok=True)
+    with open(os.path.join(c.save_dir, "task.txt"), "w") as f:
+        f.write(task + "\n")
+    img = c.screen(fresh=True)
+    frame = survey(c.kvm, c.os_name)
+    c.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
+    c.frame = None
+    ov = frame.crop(content_rect(frame))
+    record({"begin": task, "size": list(img.size)})
+    text = (f"run {run_id} started. {SYSTEM.format(os=c.os_name)}\n\nFirst image: the screen "
+            f"({img.size[0]}x{img.size[1]}); second image: the overview of every open window (now closed again).")
+    c.shot_block(img)   # saves shot01.jpg in the run folder
+    return [TextContent(type="text", text=text), picture(img), picture(ov)]
+
+
+@mcp.tool(description="The standard computer tool: one action on the computer, then the screenshot after it once "
+          "the screen has settled. action: left_click, double_click, triple_click, right_click, middle_click, "
+          "mouse_move, left_click_drag (start_coordinate -> coordinate), type (text; a trailing newline presses "
+          "Enter), key (text = combo: cmd+l, Return, ctrl+shift+t, Escape), scroll (coordinate + scroll_direction + "
+          "scroll_amount in ticks, ~13 per screenful), wait (duration seconds), zoom (region [x0,y0,x1,y1] shown "
+          "enlarged), screenshot. coordinate = [x, y] pixels of the last screenshot. Batch several calls when you "
+          "are confident (e.g. four tiles then Submit; click a field, type, Enter).")
 def computer(action: str, coordinate: list[int] | None = None, text: str | None = None, scroll_direction: str | None = None,
              scroll_amount: int | None = None, duration: float | None = None, region: list[int] | None = None,
              start_coordinate: list[int] | None = None) -> list:
@@ -167,34 +100,11 @@ def computer(action: str, coordinate: list[int] | None = None, text: str | None 
         record({"computer": inp, "error": str(e)})
         return [TextContent(type="text", text=f"error: {e}"), picture(c.screen(fresh=True))]
     if image is None:
-        from .run import latest
         c.frame = latest(c.kvm, timeout=2.0, interval=0.0, tolerance=2.0, first_delay=0.25)
-        img = c.screen()
-    else:
-        img = None
-    ex = executor()
-    ex.n += 1
-    if img is not None:
-        ex.save(img, f"step{ex.n:02d}.jpg")
+        image = c.shot_block(c.screen())
     record({"computer": inp, "note": note})
-    out = [TextContent(type="text", text=note or "ok")]
-    out.append(picture(img) if img is not None else ImageContent(type="image", data=image["source"]["data"], mimeType="image/jpeg"))
-    return out
-
-
-@mcp.tool()
-def survey() -> list:
-    """Every open window at once (the OS overview): which apps and documents are already in use. Call it when the
-    task names a kind of app and no such window is visible; then act(["click <that window>"]) brings it to the
-    front (any other next action closes the overview first)."""
-    return act(["survey"], "")
-
-
-@mcp.tool()
-def open_app(name: str) -> list:
-    """Bring the named application to the front (launching it if needed). Returns the screenshot afterwards. Prefer an
-    app the overview (begin / survey) showed already running; launch something else only when nothing open fits."""
-    return act([f"open_app {name}"], "")
+    return [TextContent(type="text", text=note or "ok"),
+            ImageContent(type="image", data=image["source"]["data"], mimeType="image/jpeg")]
 
 
 if __name__ == "__main__":

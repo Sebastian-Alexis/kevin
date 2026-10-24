@@ -87,18 +87,16 @@ The computer under control is also exposed as an MCP server running **on the KVM
 
 | tool | what it does |
 | --- | --- |
-| `begin(task)` | starts a run: resets focus tracking, opens a run folder (`/var/lib/ai-kvm/runs/<id>/` with every frame and `events.jsonl`), returns the screenshot |
-| `look()` | fresh screenshot of the target (pixels of the picture are the coordinate system) |
-| `computer(action, ...)` | the standard computer tool, one action and the settled screenshot after it (native path for Claude-family planners) |
-| `act(actions, expect)` | one batch in the action grammar (`click <target>`, `key cmd+l`, `type ...`, `scroll <target> -N`, `wait`, `open_app`), then a local model checks the screen shows `expect`; returns what ran, what was refused and why, the verdict, and the screenshot after |
-| `open_app(name)` | brings an app to the front through the OS launcher |
+| `begin(task)` | starts a run: run folder (`/var/lib/ai-kvm/runs/<id>/` with every frame and `events.jsonl`), the rules of the computer, the screenshot, and the overview of every open window (which apps the user already uses) |
+| `computer(action, ...)` | the standard computer tool: one action (`left_click`, `type`, `key`, `scroll`, `zoom`, `screenshot`, ...), then the screenshot once the screen has settled |
 
-The rails live inside the server, so they bind every planner the same way: targets named in words are located by
-the grounder (Holo4) on the frame at execution time, off-screen or unfound points refuse the whole batch,
-keystrokes with nowhere to go are refused, Enter after typed text is gated on where the text landed, and the
-`expect` check (qwen27) tells the planner whether its plan still holds without a round trip for a new screenshot.
-The grounder and verifier are local models on the controller, reached from the KVM over the dev AP
-(`provisioning/host/ai-kvm-models.service` forwards them, and forwards the MCP port to Tailscale peers).
+So a Droid session drives the computer exactly like `python3 -m agent` does (same tool, same rules, same Enter
+gate); the grounded `act` path is only in `agent/run.py`.
+
+The rails live inside the server, so they bind every planner the same way: off-screen points are refused with an
+error result, and Enter after typed text is gated on where the text landed (judged by qwen27 on the controller,
+reached from the KVM over the dev AP: `provisioning/host/ai-kvm-models.service` forwards it, and forwards the MCP
+port to Tailscale peers).
 
 **Where Droid runs.** [Factory's Droid](https://docs.factory.ai/sdk/python) is the planner: `agent/droid.py`
 opens a Droid SDK session whose only reachable surface is this MCP server: Droid's shell, file and web tools are
@@ -118,7 +116,7 @@ A cron, an HTTP hook or another agent only needs to write a file. One-off runs w
 Droid's models come through BYOK (`~/.factory/settings.json` custom models pointing at `agent/omp_gateway.py`,
 the local Anthropic/OpenAI-compatible front for the models omp is logged into), so a run costs no Factory credits.
 The same server is registered in the Factory desktop app on the Mac as connector `ai-kvm` (added by this agent
-driving the app over the KVM, see `agent/run.py`), so an interactive Droid session there has the same four tools.
+driving the app over the KVM), so an interactive Droid session there has the same two tools.
 
 Deploy to the KVM: `bash agent/deploy-mcp.sh` (rsyncs the `agent` package, builds the venv from offline wheels,
 installs the key and the unit).
