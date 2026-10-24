@@ -21,6 +21,9 @@ packages:
 - git
 - i2c-tools
 - v4l-utils
+- ustreamer
+- python3
+- rsync
 write_files:
 - path: /etc/modules-load.d/ai-kvm.conf
   content: |
@@ -30,5 +33,10 @@ write_files:
   content: |
     [connection]
     wifi.powersave = 2
+- path: /etc/systemd/journald.conf.d/persistent.conf
+  content: |
+    [Journal]
+    Storage=persistent
+    SystemMaxUse=64M
 runcmd:
 - [ systemctl, enable, --now, avahi-daemon ]

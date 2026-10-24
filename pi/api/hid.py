@@ -54,6 +54,10 @@ def ascii_to_key(ch):
 
 
 WRITE_TIMEOUT = float(os.environ.get("AIKVM_HID_TIMEOUT", "0.5"))
+# Writes block until the host polls the previous report, so typing self-paces at the endpoint rate.
+# Measured on a Linux host: 0/1 ms is lossless (~4 ms/char floor); 4/2 leaves margin for slower targets.
+KEY_HOLD = float(os.environ.get("AIKVM_KEY_HOLD_MS", "4")) / 1000
+KEY_GAP = float(os.environ.get("AIKVM_KEY_GAP_MS", "2")) / 1000
 
 
 class HostNotConnected(OSError):
@@ -98,7 +102,8 @@ class Keyboard:
         with self.lock:
             self._report()
 
-    def tap(self, usage, mods=0, hold=0.02):
+    def tap(self, usage, mods=0, hold=None):
+        hold = KEY_HOLD if hold is None else hold
         with self.lock:
             self._report(mods, [usage])
             time.sleep(hold)
@@ -127,7 +132,8 @@ class Keyboard:
             time.sleep(0.03)
             self._report()
 
-    def type_text(self, text, delay=0.012):
+    def type_text(self, text, delay=None):
+        delay = KEY_GAP if delay is None else delay
         for ch in text:
             usage, shift = ascii_to_key(ch)
             self.tap(usage, MOD["shift"] if shift else 0)
