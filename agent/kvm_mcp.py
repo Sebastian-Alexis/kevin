@@ -33,7 +33,10 @@ GRAMMAR = ('Actions, one string each, in order: "click <target>", "double_click 
            'open_app something else only when nothing suitable is open.')
 
 # reached through forwards (the host's Tailscale address), so the Host header is not the bind address
-mcp = FastMCP("ai-kvm", transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
+# stateless: no per-client session ids, so a server restart (deploy) never strands a connected app with
+# "Session not found"; the run state lives in the Executor, keyed by begin()
+mcp = FastMCP("ai-kvm", stateless_http=True,
+              transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 _ex = None
 _events = os.environ.get("AIKVM_EVENTS")
 
