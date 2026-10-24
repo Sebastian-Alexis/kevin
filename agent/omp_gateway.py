@@ -75,8 +75,8 @@ def make_handler(gw, key=None):
             self.wfile.write(data)
 
         def _authorized(self):
-            """With a key configured, the client must present it (Anthropic x-api-key or OpenAI bearer style)."""
-            if key is None:
+            """Loopback clients are trusted; anyone else must present the key (Anthropic x-api-key or OpenAI bearer)."""
+            if key is None or self.client_address[0].startswith("127."):
                 return True
             got = self.headers.get("x-api-key") or self.headers.get("Authorization", "").removeprefix("Bearer ").strip()
             if got == key:
