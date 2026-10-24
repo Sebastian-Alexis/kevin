@@ -445,7 +445,7 @@ def ground(grounder, screen, target):
 
 
 def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=False, save_dir=None, log=print,
-        coords="norm", app=None, grounder=None, restore=False):
+        coords="norm", app=None, grounder=None, restore=False, isolate=True):
     """Drive the computer until the model reports the task done or impossible. An app the task names is brought
     to the front before the first look (on macOS with the other apps hidden until the run ends)."""
     history, batches, frame = [], [], None
@@ -453,7 +453,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
     focused = hidden = False   # focused: the app open_app raised still has keyboard focus (no click since)
     primed = False             # the last executed batch ended with a focus key (cmd+t, cmd+l, ...): its input has focus
     try:
-        app = None if dry_run else (app or task_app(vlm, task))
+        app = None if (dry_run or not isolate) else (app or task_app(vlm, task))
         if app:
             t0 = time.monotonic()
             focused, note, frame = open_app(kvm, vlm, app, os_name)
@@ -623,6 +623,7 @@ def main(argv=None):
     p.add_argument("--grounder", default=None, help="grounding endpoint (e.g. http://127.0.0.1:8010/v1): the planner names targets, this model locates them")
     p.add_argument("--grounder-model", default="holo4")
     p.add_argument("--show-all", action="store_true", help="at the end, bring back the apps Hide Others hid (off by default)")
+    p.add_argument("--no-isolate", dest="isolate", action="store_false", help="do not raise the app / Hide Others first")
     a = p.parse_args(argv)
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
@@ -633,7 +634,7 @@ def main(argv=None):
     if grounder:
         coords = "norm"   # Holo4 answers on the 0-1000 grid
     result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords,
-                 app=a.app, grounder=grounder, restore=a.show_all)
+                 app=a.app, grounder=grounder, restore=a.show_all, isolate=a.isolate)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 
