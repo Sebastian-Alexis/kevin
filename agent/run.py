@@ -419,7 +419,7 @@ def show_all(kvm, vlm):
 
 
 def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=False, save_dir=None, log=print,
-        coords="norm"):
+        coords="norm", app=None):
     """Drive the computer until the model reports the task done or impossible. An app the task names is brought
     to the front before the first look (on macOS with the other apps hidden until the run ends)."""
     history, batches, frame = [], [], None
@@ -427,7 +427,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
     focused = hidden = False   # focused: the app open_app raised still has keyboard focus (no click since)
     primed = False             # the last executed batch ended with a focus key (cmd+t, cmd+l, ...): its input has focus
     try:
-        app = None if dry_run else task_app(vlm, task)
+        app = None if dry_run else (app or task_app(vlm, task))
         if app:
             t0 = time.monotonic()
             focused, note, frame = open_app(kvm, vlm, app, os_name)
@@ -497,7 +497,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                                    "give coordinates inside it")
                     log(f"step {step}: model {t_plan:.2f}s rejected off-screen points {off}")
                     continue
-                if unfocused_keys(actions, focused, primed):
+                if not hidden and unfocused_keys(actions, focused, primed):   # isolated: keys can only reach the task's app
                     history.append(f"saw: {observe} | REJECTED, nothing was typed: no text field has focus. Begin the "
                                    "batch with the shortcut that focuses the input (e.g. cmd+t, cmd+l) or a click on "
                                    f"it, then type: {summary}")
@@ -523,7 +523,7 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                         # a click can move keyboard focus anywhere: another window, the desktop
                         focused = focused and not any(a["type"] == "click" for a in arg)
                     elif kind == "gate":
-                        fits, holder = typed_where_wanted(kvm, vlm, task, arg)
+                        fits, holder = (True, "") if hidden else typed_where_wanted(kvm, vlm, task, arg)
                         if not fits:
                             notes.insert(0, f'Enter NOT pressed: "{arg}" landed in: {holder}, not an input that fits '
                                             'the task, so the keyboard focus is somewhere else. Move it into the right '
@@ -574,12 +574,14 @@ def main(argv=None):
                    help="after acting, wait for the screen to stop changing, at most this many seconds")
     p.add_argument("--save-dir")
     p.add_argument("--dry-run", action="store_true", help="ask the model but do not send HID actions")
+    p.add_argument("--app", help="app to raise and isolate in (Hide Others) when the task text does not name one")
     a = p.parse_args(argv)
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
     vlm = VLM(a.llm, a.model, key=load_key(a.key_file), max_side=a.max_side)
     coords = a.coords or ("pixels" if any(k in a.model.lower() for k in ("claude", "anthropic")) else "norm")
-    result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords)
+    result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords,
+                 app=a.app)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 
