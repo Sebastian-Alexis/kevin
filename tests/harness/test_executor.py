@@ -99,11 +99,7 @@ s.do({"action": "left_click", "coordinate": P(800, 260)}); s.do({"action": "key"
 st = wait_state(lambda st: any(k.get("key", "").lower() == "a" for k in st.get("keys", [])))
 k = [k for k in st.get("keys", []) if k.get("key", "").lower() == "a"]
 case("key-combo", bool(k) and k[-1].get("ctrl") and k[-1].get("shift"), f"keys {k[-1:] }")
-# 11 mouse_down / glide / mouse_up as a manual drag
-reset(s)
-s.do({"action": "left_mouse_down", "coordinate": P(400, 320)}); s.do({"action": "left_mouse_up", "coordinate": P(480, 360)}); time.sleep(0.6)
-st = wait_state(lambda st: any(e.get("t") == "up" for e in st.get("events", [])))
-case("manual-drag", abs(st["box"]["w"] - 280) <= 6 and abs(st["box"]["h"] - 160) <= 6, f"box {st['box']}")
+# (left_mouse_down/left_mouse_up are not in the tool schema until their split path passes here)
 s.kvm.actions([{"type": "release"}])
 n = sum(1 for _, ok, _ in results if ok)
 print(f"\n{n}/{len(results)} passed")

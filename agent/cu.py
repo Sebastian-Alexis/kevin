@@ -44,8 +44,7 @@ TOOL = {"name": "computer", "input_schema": {
     "properties": {
         "action": {"type": "string", "enum": ["key", "type", "mouse_move", "left_click", "left_click_drag", "right_click",
                                                "middle_click", "double_click", "triple_click", "screenshot",
-                                               "cursor_position", "scroll", "wait", "zoom", "left_mouse_down",
-                                               "left_mouse_up"]},
+                                               "cursor_position", "scroll", "wait", "zoom"]},
         "coordinate": {"type": "array", "items": {"type": "integer"}, "description": "[x, y] pixels of the screenshot"},
         "start_coordinate": {"type": "array", "items": {"type": "integer"}, "description": "left_click_drag: the exact pixel to press on (required), e.g. a resize handle or a slider knob; coordinate is where it is released"},
         "text": {"type": "string", "description": "type: the text; key: the key combo, e.g. cmd+l, Return, ctrl+shift+t; on a click: modifier(s) to hold during it, e.g. cmd or shift"},
@@ -154,7 +153,7 @@ class Session:
             self.frame = None
             return ("dragged; the layout may have moved (handles, sliders): take a screenshot before the next drag "
                     "rather than reusing old coordinates"), None
-        elif a == "left_mouse_down":
+        elif a == "left_mouse_down":   # not advertised: the harness shows the split down/glide/up path does not register yet
             if inp.get("coordinate"):
                 self.pointer = self.frac(inp["coordinate"])
                 self.kvm.actions([{"type": "move", "x": self.pointer[0], "y": self.pointer[1]}, {"type": "wait", "ms": 50}])
