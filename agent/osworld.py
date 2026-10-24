@@ -151,9 +151,6 @@ def main(argv=None):
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
 
 # ---- arm64 host: run the x86 VM image through qemux/qemu (multi-arch, TCG emulation) instead of the amd64-only
 # container the harness hardcodes. Same port contract (5000 server, 9222 chromium, 8080 vlc, 8006 web VNC); the
@@ -201,3 +198,7 @@ def arm64_docker_provider():
 
     P.DockerProvider.start_emulator = start_emulator
     P.DockerProvider.stop_emulator = stop_emulator
+
+
+if __name__ == "__main__":
+    sys.exit(main())

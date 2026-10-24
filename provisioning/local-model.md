@@ -35,7 +35,7 @@ on disk elsewhere) and `/opt/qwen27/serve.sh` inside it. Settings in `/etc/qwen2
 
     MODEL=nvidia/Qwen3.8-27B-NVFP4   SERVED_NAME=qwen27   PORT=8000
     MAX_MODEL_LEN=16384   MAX_NUM_SEQS=4   MAX_BATCHED_TOKENS=8192
-    GPU_MEM=0.55          # ~65 GiB budget of 119 (KV pool 284k tokens); host shows ~42 GB available while serving
+    GPU_MEM=0.35          # ~42 GiB budget of 119 (was 0.55; lowered 2026-10-24 to leave RAM for a VM, serving fine)
     KV_DTYPE=auto         # fp8 KV needs FLASHINFER; KV is a non-issue at this context
     BACKEND=flash_attn    SPEC_TOKENS=6   LOAD_FORMAT=fastsafetensors   EXTRA_ARGS=
 
