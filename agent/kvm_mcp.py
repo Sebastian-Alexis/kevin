@@ -172,8 +172,11 @@ async def run(task: str, ctx: Context, max_turns: int = 30) -> list:
 @mcp.custom_route("/run", methods=["POST"])
 async def run_http(request):
     """Plain HTTP form of `run` for clients without MCP tool visibility (e.g. a Factory subagent using curl):
-    POST /run {"task": "..."} -> JSON {done, text, turns, seconds, steps}."""
-    from starlette.responses import JSONResponse
+    POST /run {"task": "..."} streams one line per step while it runs and a final JSON line
+    {done, text, turns, seconds, steps}. Streaming is what makes cancel work: a killed client cannot be told apart
+    from a slow one through the Tailscale/socat forward, but a write to its dead socket fails within a second, and
+    that stops the loop before its next action."""
+    from starlette.responses import JSONResponse, StreamingResponse
     body = await request.json()
     task = str(body.get("task", "")).strip()
     if not task:
@@ -184,31 +187,35 @@ async def run_http(request):
     os.makedirs(c.save_dir, exist_ok=True)
     c.base, c.model, c.memory, c.computer = PLANNER_BASE, PLANNER_MODEL, MEMORY, COMPUTER
     c.key = load_key(os.environ.get("AIKVM_PLANNER_KEY_FILE", "/etc/ai-kvm/gateway-key"))
-    steps = []
-    c.log = lambda m: steps.append(m[:300])
-    c.stop = False
+    steps, queue = [], asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def log(m):
+        steps.append(m[:300])
+        loop.call_soon_threadsafe(queue.put_nowait, m[:300])
+    c.log, c.stop = log, False
     t0 = time.monotonic()
     record({"run": len(task)})
     work = asyncio.ensure_future(asyncio.to_thread(c.run, task, int(body.get("max_turns", 30))))
 
-    async def watch_disconnect():   # the client (a cancelled Droid subagent's curl) going away stops the run
-        while not work.done():
-            if await request.is_disconnected():
+    async def body_gen():
+        try:
+            while not work.done():
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    yield json.dumps({"step": msg}) + "\n"
+                except asyncio.TimeoutError:
+                    yield " \n"   # keepalive: fails fast when the client is gone
+            result = work.result() if not work.exception() else {"done": False, "fail": str(work.exception())}
+            threading.Thread(target=c.remember, daemon=True).start()
+            yield json.dumps({"done": bool(result.get("done")), "fail": result.get("fail"), "text": result.get("text", ""),
+                              "turns": result.get("turns"), "seconds": round(time.monotonic() - t0, 1), "steps": steps}) + "\n"
+        finally:
+            if not work.done():   # the client went away: stop the computer
                 c.stop = True
-                record({"stop": "client disconnected"})
-                return
-            await asyncio.sleep(0.5)
-    watcher = asyncio.ensure_future(watch_disconnect())
-    try:
-        result = await work
-    except Exception as e:
-        result = {"done": False, "fail": f"{type(e).__name__}: {e}"}
-    finally:
-        watcher.cancel()
-        c.log = lambda *a: None
-    threading.Thread(target=c.remember, daemon=True).start()
-    return JSONResponse({"done": bool(result.get("done")), "fail": result.get("fail"), "text": result.get("text", ""),
-                         "turns": result.get("turns"), "seconds": round(time.monotonic() - t0, 1), "steps": steps})
+                record({"stop": "client gone"})
+            c.log = lambda *a: None
+    return StreamingResponse(body_gen(), media_type="application/x-ndjson")
 
 
 @mcp.custom_route("/stop", methods=["POST"])
