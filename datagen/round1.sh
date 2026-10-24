@@ -8,9 +8,10 @@ cd "$(dirname "$0")/.."
 PY=${PY:-.venv/bin/python}
 if [ -n "${QUICK:-}" ]; then N_OSA=200; N_WEB=200; N_TPL=150; else N_OSA=4000; N_WEB=5000; N_TPL=2500; fi
 
-$PY datagen/osatlas_convert.py --os macos -n "$N_OSA" &
-$PY datagen/web_grounding.py -n "$N_WEB" &
-wait
+$PY datagen/osatlas_convert.py --os macos -n "$N_OSA" & OSA=$!
+$PY datagen/web_grounding.py -n "$N_WEB" & WEB=$!
+wait $OSA || { echo "osatlas failed: rerun with --resume" >&2; exit 1; }
+wait $WEB || { echo "web grounding failed" >&2; exit 1; }
 $PY datagen/action_templates.py --from osatlas,web,ax -n "$N_TPL"
 
 if [ -n "${REPHRASE:-}" ]; then   # off for round 1 so we can measure its effect later

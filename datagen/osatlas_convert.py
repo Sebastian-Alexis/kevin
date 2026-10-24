@@ -63,12 +63,13 @@ def main():
     ap.add_argument("--max-chars", type=int, default=80)
     ap.add_argument("--zip", help="local images zip instead of remote range reads")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--resume", action="store_true", help="continue an interrupted run with the same seed/args")
     ap.add_argument("--cache", default=str(DATA / "_cache" / "osatlas"))
     args = ap.parse_args()
 
     out_dir = DATA / "osatlas" / f"{args.os}-seed{args.seed}"
-    if out_dir.exists():
-        sys.exit(f"{out_dir} already exists: delete it or use another --seed")
+    if out_dir.exists() and not args.resume:
+        sys.exit(f"{out_dir} already exists: --resume to continue it, or use another --seed")
     rng = random.Random(args.seed)
     ann = load_annotations(args.os, Path(args.cache))
     rng.shuffle(ann)
@@ -92,13 +93,34 @@ def main():
 
     with Shard("osatlas", shard_id=f"{args.os}-seed{args.seed}", os=args.os, dataset="OS-Copilot/OS-Atlas-data",
                license="Apache-2.0") as shard:
-        missing = 0
+        missing = bad = 0
+        done = set()
+        if args.resume:  # picks are deterministic for a seed, so skip screenshots already written
+            for line in open(shard.dir / "steps.jsonl"):
+                done.add(json.loads(line).get("extra", {}).get("img"))
+            shard.n_frames = len(list((shard.dir / "frames").glob("*.jpg")))
+            shard.n_steps = sum(1 for _ in open(shard.dir / "steps.jsonl"))
+            legacy = None in done  # shards from before "img" was recorded: fall back to frame count
+            print(f"resuming at {shard.n_frames} frames / {shard.n_steps} samples")
         for i, (fname, els) in enumerate(picked):
+            if args.resume and ((legacy and i < shard.n_frames + missing + bad) or fname in done):
+                continue
             members = by_base.get(Path(fname).name)
             if not members:
                 missing += 1
                 continue
-            img = Image.open(io.BytesIO(zf.read(members[0])))
+            img = None
+            for _ in range(3):  # remote range reads occasionally hiccup; some archive members are just corrupt
+                try:
+                    img = Image.open(io.BytesIO(zf.read(members[0])))
+                    img.load()
+                    break
+                except Exception as e:
+                    err = e
+            if img is None:
+                bad += 1
+                print(f"  ! skipping {fname}: {type(err).__name__}", flush=True)
+                continue
             w, h = img.size
             frame = shard.add_frame(img)
             for e in els:
@@ -106,10 +128,10 @@ def main():
                 box = bbox_to1000(l * w, t * h, r * w, b * h, w, h)
                 shard.add_step(frame, verbify(e["instruction"], e.get("data_type")),
                                {"action": "click", "x": (box[0] + box[2]) // 2, "y": (box[1] + box[3]) // 2},
-                               bbox=box, os=args.os, raw_instruction=e["instruction"], role=e.get("data_type"))
+                               bbox=box, os=args.os, raw_instruction=e["instruction"], role=e.get("data_type"), img=fname)
             if (i + 1) % 100 == 0:
                 print(f"  {i + 1}/{len(picked)} screenshots, {shard.n_steps} samples", flush=True)
-        print(f"wrote {shard.n_steps} samples to {shard.dir} ({missing} images not found in zip)")
+        print(f"wrote {shard.n_steps} samples to {shard.dir} ({missing} not in zip, {bad} unreadable)")
 
 
 if __name__ == "__main__":
