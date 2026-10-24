@@ -72,9 +72,9 @@ TURN_SCHEMA = {
 def parse(text):
     """The first JSON object in a model reply: schema-constrained replies are exactly one, free-form ones may wrap
     it in ```json fences. raw_decode stops at the object's end and treats braces inside strings as text."""
-    start = text.find("{")
+    start = text.find("{") if isinstance(text, str) else -1   # a refusal or empty completion comes back as None
     if start < 0:
-        raise ValueError(f"no JSON object in reply: {text[:200]!r}")
+        raise ValueError(f"no JSON object in reply: {text[:200] if text else text!r}")
     return json.JSONDecoder().raw_decode(text, start)[0]
 
 
