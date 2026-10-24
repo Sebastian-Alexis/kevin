@@ -24,7 +24,9 @@ from .run import SYSTEM, point
 from .vlm import VLM, load_key
 
 PLACEHOLDER_SIZE = (640, 480)   # ustreamer's "NO SIGNAL" frame
-GROUND = 'Locate %s. Reply only JSON {"point_2d": [x, y]} with coordinates normalized to 0-1000.'
+GROUND = ('Locate %s. If it is not visible in this screenshot, reply exactly {"point_2d": null}. '
+          'Otherwise reply only JSON {"point_2d": [x, y]} with coordinates normalized to 0-1000.')
+DEBUG_DIR = os.environ.get("AIKVM_SETUP_DEBUG", "/tmp/aikvm-setup")
 
 
 def awaiting_choice(img):
@@ -68,13 +70,17 @@ def click(kvm, nx, ny, count=1):
 
 
 def locate(kvm, vlm, target, log, timeout=6.0):
-    """0-1000 point of a described element; retries while it isn't on screen yet (menus/windows still opening)."""
+    """0-1000 point of a described element; retries while it isn't on screen yet (menus/windows still opening).
+    Each frame the model looked at is saved to DEBUG_DIR for post-mortems."""
     deadline = time.monotonic() + timeout
+    os.makedirs(DEBUG_DIR, exist_ok=True)
     while True:
         img = frame(kvm)
         if img is None:
             raise RuntimeError("video lost")
         screen = img.crop(content_rect(img))
+        tag = "".join(c if c.isalnum() else "_" for c in target[:40])
+        screen.save(os.path.join(DEBUG_DIR, f"{time.strftime('%H%M%S')}-{tag}.jpg"))
         text, _, dt = vlm.chat([{"role": "system", "content": SYSTEM},
                                 {"role": "user", "content": [vlm.image_part(screen),
                                                              {"type": "text", "text": GROUND % target}]}], 24)
@@ -89,21 +95,140 @@ def locate(kvm, vlm, target, log, timeout=6.0):
             time.sleep(0.3)
 
 
+def pillarboxed(img):
+    """The capture shows the Mac's own (16:10) panel letterboxed into the 16:9 frame: built-in is the mirror master."""
+    x0, y0, x1, y1 = content_rect(img)
+    return (x1 - x0) < img.width * 0.98 or (y1 - y0) < img.height * 0.98
+
+
+def settled(kvm, timeout=6.0, interval=0.4, tolerance=2.0):
+    """Wait until two consecutive frames are nearly identical (display transitions and animations done)."""
+    prev = None
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        img = frame(kvm)
+        if img is not None and prev is not None and img.size == prev.size:
+            if ImageStat.Stat(ImageChops.difference(img, prev).convert("L")).mean[0] < tolerance:
+                return img
+        prev = img
+        time.sleep(interval)
+    return prev
+
+
+def find(kvm, vlm, target, check, log, timeout=6.0, retry=None):
+    """locate() whose answer must pass check(x, y); a failed check means the model guessed at something not on
+    screen (e.g. a menu that didn't open), so take a fresh screenshot and ask again, optionally running retry()."""
+    deadline = time.monotonic() + timeout
+    while True:
+        x, y = locate(kvm, vlm, target, log, timeout=max(0.5, deadline - time.monotonic()))
+        if check(x, y):
+            return x, y
+        if time.monotonic() > deadline:
+            raise RuntimeError(f"{target}: implausible position ({x:.0f},{y:.0f})")
+        log(f"  implausible position for {target!r}, retrying")
+        if retry:
+            retry()
+        time.sleep(0.4)
+
+
+def reveal_menu_bar(kvm):
+    """Touch the top edge (and wiggle) so an auto-hidden menu bar slides in."""
+    kvm.actions([{"type": "move", "x": 0.5, "y": 0.02}, {"type": "wait", "ms": 60},
+                 {"type": "move", "x": 0.5, "y": 0.0}, {"type": "wait", "ms": 60},
+                 {"type": "move", "x": 0.52, "y": 0.0}, {"type": "wait", "ms": 700}])
+
+
+def ask_yes(kvm, vlm, question):
+    img = frame(kvm)
+    if img is None:
+        return False
+    text, _, _ = vlm.chat([{"role": "system", "content": SYSTEM},
+                           {"role": "user", "content": [vlm.image_part(img.crop(content_rect(img))),
+                                                        {"type": "text", "text": question + " Answer only yes or no."}]}], 4)
+    return text.strip().lower().startswith("yes")
+
+
+SETTINGS_FRONT = 'Does the menu bar show "System Settings" as the active app name next to the Apple logo?'
+
+
+def open_system_settings(kvm, vlm, log, attempts=2):
+    """Apple menu > System Settings..., confirmed by the menu bar naming it the active app. The Apple logo is
+    unambiguous, unlike picking the Screen Mirroring icon out of a dozen third-party status icons."""
+    for _ in range(attempts):
+        reveal_menu_bar(kvm)
+        ax, ay = find(kvm, vlm, "the Apple logo at the far left end of the menu bar", lambda x, y: x < 80 and y < 45,
+                      log, retry=lambda: reveal_menu_bar(kvm))
+        click(kvm, ax, ay)
+        time.sleep(0.5)
+        sx, sy = find(kvm, vlm, 'the "System Settings..." item in the open Apple menu',
+                      lambda x, y: x < 400 and ay + 15 < y < 450, log,
+                      retry=lambda: (reveal_menu_bar(kvm), click(kvm, ax, ay)))
+        click(kvm, sx, sy)
+        time.sleep(1.2)
+        reveal_menu_bar(kvm)
+        if ask_yes(kvm, vlm, SETTINGS_FRONT):
+            return
+        log("  System Settings did not come to the front, retrying")
+        kvm.actions([{"type": "key", "combo": "esc"}])
+    raise RuntimeError("could not open System Settings")
+
+
+def show_all_and_close(kvm, vlm, log):
+    """System Settings > Show All (undo Hide Others), then close the settings window if it is still in front."""
+    kvm.actions([{"type": "key", "combo": "esc"}])   # close a pop-up menu a failed step may have left open
+    reveal_menu_bar(kvm)
+    ux, uy = find(kvm, vlm, 'the bold "System Settings" app menu title in the menu bar, right of the Apple logo',
+                  lambda x, y: x < 250 and y < 45, log, retry=lambda: reveal_menu_bar(kvm))
+    click(kvm, ux, uy)
+    time.sleep(0.5)
+    sx, sy = find(kvm, vlm, 'the "Show All" item in the open System Settings menu',
+                  lambda x, y: abs(x - ux) < 300 and y > uy + 30, log)
+    click(kvm, sx, sy)
+    time.sleep(0.6)
+    reveal_menu_bar(kvm)
+    if ask_yes(kvm, vlm, SETTINGS_FRONT):
+        kvm.actions([{"type": "key", "combo": "cmd+w"}])
+    else:
+        log("  System Settings is not frontmost; leaving its window open")
+
+
 def optimize_for_mac(kvm, vlm, log):
-    """Displays > Optimize for: this Mac (not ai-kvm). Returns True when the capture shows the Mac's native aspect."""
-    kvm.actions([{"type": "move", "x": 0.5, "y": 0.0}, {"type": "wait", "ms": 500}])   # reveal an auto-hidden menu bar
-    click(kvm, *locate(kvm, vlm, "the Screen Mirroring icon in the menu bar (two overlapping rectangles, highlighted)", log))
-    time.sleep(0.4)
-    click(kvm, *locate(kvm, vlm, 'the "Display Settings..." item at the bottom of the Screen Mirroring menu', log))
-    time.sleep(1.0)
-    click(kvm, *locate(kvm, vlm, 'the pop-up button to the right of "Optimize for" in Displays settings', log))
-    time.sleep(0.4)
-    click(kvm, *locate(kvm, vlm, "the menu item naming this Mac (the option that is not ai-kvm)", log))
-    time.sleep(1.0)
-    kvm.actions([{"type": "key", "combo": "cmd+q"}])   # quit System Settings
-    img = wait_for(lambda: (lambda f: f if f is not None and content_rect(f)[2] - content_rect(f)[0] < f.width * 0.98
-                            else None)(frame(kvm)), 6)
-    return img is not None
+    """Displays > Optimize for: this Mac (not ai-kvm). Returns True once the capture shows the Mac's native panel.
+
+    Every model-provided point is sanity-checked against where that element can be before it is clicked, and
+    keyboard shortcuts are only sent once the menu bar confirms System Settings is the active app."""
+    settled(kvm)
+    open_system_settings(kvm, vlm, log)
+    # other apps' windows (e.g. a terminal set to float on top) can cover System Settings: hide them for now
+    kvm.actions([{"type": "key", "combo": "alt+cmd+h"}, {"type": "wait", "ms": 600}])
+    try:
+        qx, qy = find(kvm, vlm, "the Search field at the top of the System Settings window's left sidebar",
+                      lambda x, y: y < 450, log, timeout=6)
+        click(kvm, qx, qy)
+        kvm.actions([{"type": "key", "combo": "cmd+a"}, {"type": "type", "text": "Displays"},
+                     {"type": "wait", "ms": 900}])
+        dx, dy = find(kvm, vlm, '"Displays" in the System Settings sidebar search results',
+                      lambda x, y: abs(x - qx) < 300 and y > qy, log)
+        click(kvm, dx, dy)
+        time.sleep(1.0)
+        px, py = find(kvm, vlm, 'the pop-up button showing "ai-kvm" to the right of the "Optimize for" label in the '
+                                'System Settings Displays pane', lambda x, y: x > 400 and 80 < y < 960, log, timeout=8)
+        click(kvm, px, py)
+        time.sleep(0.5)
+        # macOS opens the list so the selected item sits on the button: other items appear above/below it
+        mx, my = find(kvm, vlm, 'the item in the open pop-up menu that names this Mac (the option that is not '
+                                '"ai-kvm")', lambda x, y: abs(y - py) < 250 and abs(x - px) < 300, log)
+        click(kvm, mx, my)
+        restored = wait_for(lambda: (lambda f: f if f is not None and pillarboxed(f) else None)(frame(kvm)), 6)
+        settled(kvm, timeout=3)
+    finally:
+        try:
+            show_all_and_close(kvm, vlm, log)
+        except RuntimeError as e:
+            # activating an app unhides it: cmd+tab at least brings back the most recently used one
+            log(f"  Show All failed ({e}); cmd+tab to unhide the previous app")
+            kvm.actions([{"type": "key", "combo": "esc"}, {"type": "key", "combo": "cmd+tab"}])
+    return restored is not None
 
 
 def pointer_error(kvm, points=((300, 300), (700, 650))):
@@ -134,42 +259,50 @@ def pointer_error(kvm, points=((300, 300), (700, 650))):
     return round(max(errors))
 
 
-def first_contact(kvm, vlm, log=print, signal_timeout=45):
+def first_contact(kvm, vlm, log=print, usb_timeout=120, signal_timeout=45):
     t0 = time.monotonic()
     report = {"ok": False}
 
     def mark(key):
         report[key] = round(time.monotonic() - t0, 2)
 
-    health = wait_for(lambda: (lambda h: h if h.get("usb") == "configured" else None)(kvm.health()), 30)
+    health = wait_for(lambda: (lambda h: h if h.get("usb") == "configured" else None)(kvm.health()), usb_timeout)
     if not health:
         report["problem"] = "no USB host: plug the KVM's USB-C into the target computer"
         return report
     mark("usb_s")
-    img = wait_for(lambda: frame(kvm), signal_timeout)
-    if img is None:
+    if wait_for(lambda: frame(kvm), signal_timeout) is None:
         report["problem"] = "no HDMI signal: connect the target's video output to the KVM and wake the computer"
         return report
     mark("video_s")
-    if awaiting_choice(img):
-        # macOS shows "What do you want to show on ai-kvm?"; give it a moment to settle, then accept the default
-        time.sleep(1.0)
-        if awaiting_choice(frame(kvm) or img):
-            log("display waiting for a choice: pressing Return (Entire Screen / Start Mirroring)")
-            kvm.actions([{"type": "key", "combo": "enter"}])
-            report["accepted_mirror_dialog"] = True
-            img = wait_for(lambda: (lambda f: f if f is not None and not awaiting_choice(f) else None)(frame(kvm)), 10)
-            if img is None:
-                report["problem"] = "display still not configured after accepting the mirroring dialog"
-                return report
-            mark("mirroring_s")
-            if optimize_for_mac(kvm, vlm, log):
-                report["native_resolution_restored"] = True
-                mark("restored_s")
-            else:
-                report["problem"] = "could not set Displays > Optimize for to this Mac"
-                return report
-            img = frame(kvm)
+    img = settled(kvm, timeout=4)   # ignore a stale frame from before the target (re)configured the display
+    if img is not None and awaiting_choice(img):
+        # macOS shows "What do you want to show on ai-kvm?" with Entire Screen / Start Mirroring as the default
+        log("display waiting for a choice: pressing Return (Entire Screen / Start Mirroring)")
+        kvm.actions([{"type": "key", "combo": "enter"}])
+        report["accepted_mirror_dialog"] = True
+        img = wait_for(lambda: (lambda f: f if f is not None and not awaiting_choice(f) else None)(frame(kvm)), 10)
+        if img is None:
+            report["problem"] = "display still not configured after accepting the mirroring dialog"
+            return report
+        mark("mirroring_s")
+    if img is not None and not pillarboxed(img):
+        # mirroring with the KVM as master: the Mac's own panel is running at the KVM's 720p
+        try:
+            restored = optimize_for_mac(kvm, vlm, log)
+        except RuntimeError as e:
+            log(f"  {e}")
+            kvm.actions([{"type": "key", "combo": "esc"}])   # close any menu left open by a failed step
+            restored = False
+        if not restored:
+            report["problem"] = "could not set Displays > Optimize for to this Mac"
+            return report
+        report["native_resolution_restored"] = True
+        mark("restored_s")
+    img = frame(kvm)
+    if img is None:
+        report["problem"] = "video lost"
+        return report
     rect = content_rect(img)
     report["screen"] = [rect[2] - rect[0], rect[3] - rect[1]]
     report["pointer_error"] = pointer_error(kvm)

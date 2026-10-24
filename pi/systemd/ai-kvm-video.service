@@ -1,7 +1,8 @@
 [Unit]
 Description=ai-kvm HDMI capture (tc358743 + ustreamer)
-After=multi-user.target
-ConditionPathExists=/dev/video0
+# Start as early as possible: setting the EDID raises hotplug, which is when the target sees the display.
+# capture-init.sh waits for /dev/video0 itself.
+After=systemd-modules-load.service
 
 [Service]
 ExecStartPre=/opt/ai-kvm/video/capture-init.sh /dev/video0

@@ -1,7 +1,8 @@
 [Unit]
 Description=ai-kvm control API
-After=ai-kvm-hid.service network-online.target
-Wants=ai-kvm-hid.service network-online.target
+# Binds 0.0.0.0, so it needs no network-online wait: it is ready the moment Wi-Fi associates.
+After=ai-kvm-hid.service
+Wants=ai-kvm-hid.service
 
 [Service]
 ExecStart=/usr/bin/python3 /opt/ai-kvm/api/server.py

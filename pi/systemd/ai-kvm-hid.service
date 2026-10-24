@@ -1,7 +1,10 @@
 [Unit]
 Description=ai-kvm USB HID gadget (keyboard + absolute mouse)
-After=sys-kernel-config.mount
+# Early boot: the target enumerates the keyboard/mouse as soon as the UDC is bound.
+DefaultDependencies=no
+After=sys-kernel-config.mount systemd-modules-load.service
 Requires=sys-kernel-config.mount
+Before=sysinit.target
 
 [Service]
 Type=oneshot
@@ -10,4 +13,4 @@ ExecStart=/opt/ai-kvm/hid/gadget-up.sh
 ExecStop=/opt/ai-kvm/hid/gadget-down.sh
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=sysinit.target

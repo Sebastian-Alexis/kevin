@@ -48,7 +48,13 @@ printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00
 ln -sf functions/hid.kbd   configs/c.1/
 ln -sf functions/hid.mouse configs/c.1/
 
-UDC=$(find /sys/class/udc -mindepth 1 -maxdepth 1 -printf '%f\n' | head -n1)
+# early boot: dwc2 may still be probing, so wait (up to 10 s) for the USB device controller to appear
+UDC=""
+for _ in $(seq 1 100); do
+  UDC=$(find /sys/class/udc -mindepth 1 -maxdepth 1 -printf '%f\n' | head -n1)
+  [ -n "$UDC" ] && break
+  sleep 0.1
+done
 echo "$UDC" > UDC
 for _ in $(seq 1 50); do [ -e /dev/hidg0 ] && [ -e /dev/hidg1 ] && break; sleep 0.1; done
 chmod 666 /dev/hidg0 /dev/hidg1
