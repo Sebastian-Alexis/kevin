@@ -28,7 +28,7 @@ Target OS: %(os)s
 Previous turns:
 %(past)s
 Reply with ONLY one JSON object, no prose:
-{"think": "<=25 words: work out what to do before acting (e.g. which items belong together and why); then act on ONE conclusion", "observe": "<=8 words: what changed / what you see", "actions": [{...}, {...}], "done": false}
+{"plan": "<=25 words: the one move this turn makes and why (e.g. which four items form a group)", "observe": "<=8 words: what changed / what you see", "actions": ["...", "..."], "done": false}
 Each action is one short string:
  "click <target> @x,y"   (also "double_click", "right_click"; x,y = center of the element, %(coords)s; target = short unique description)
  "type <text>"           types into whatever has keyboard focus
@@ -44,7 +44,7 @@ Rules:
 - Only target things visible in this screenshot; for anything not visible yet, end the turn and look again.
 - If the last turn did not work, do something different instead of repeating it.
 - Batch only what you can see (e.g. click a visible field, type, enter), and finish the move in the same batch: when a confirm/submit/OK button is visible, click it too.
-Task complete: {"think": "...", "observe": "...", "actions": [], "done": true}. Impossible: {"think": "...", "observe": "...", "actions": [], "fail": "reason"}."""
+Task complete: {"plan": "...", "observe": "...", "actions": [], "done": true}. Impossible: {"plan": "...", "observe": "...", "actions": [], "fail": "reason"}."""
 
 CLICKS = ("click", "double_click", "right_click")
 HISTORY_TURNS = 8   # turns of history shown to the model
@@ -56,12 +56,12 @@ HISTORY_TURNS = 8   # turns of history shown to the model
 TURN_SCHEMA = {
     "type": "object",
     "properties": {
-        "think": {"type": "string"},
+        "plan": {"type": "string"},
         "observe": {"type": "string"},
         "actions": {"type": "array", "items": {"type": "string"}},
         "done": {"type": "boolean"},
         "fail": {"type": "string"}},
-    "required": ["think", "observe", "actions", "done"],
+    "required": ["plan", "observe", "actions", "done"],
     "additionalProperties": False}
 
 
@@ -467,11 +467,22 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             try:
                 decision = parse(reply)
                 actions = split_actions(decision.get("actions", []))
-                if coords != "norm":
-                    for a in actions:
-                        for spec in a.values():
-                            if isinstance(spec, dict) and isinstance(spec.get("point_2d"), list) and len(spec["point_2d"]) == 2:
-                                spec["point_2d"] = [spec["point_2d"][0] * 1000 / sw, spec["point_2d"][1] * 1000 / sh]
+                off = []
+                for a in actions:
+                    for spec in a.values():
+                        if isinstance(spec, dict) and isinstance(spec.get("point_2d"), list) and len(spec["point_2d"]) == 2:
+                            x, y = spec["point_2d"]
+                            lim = (sw, sh) if coords != "norm" else (1000, 1000)
+                            if not (0 <= x <= lim[0] and 0 <= y <= lim[1]):
+                                off.append(f"{spec.get('target', '?')} @{x:.0f},{y:.0f}")
+                            if coords != "norm":
+                                spec["point_2d"] = [round(x * 1000 / sw), round(y * 1000 / sh)]   # ints: stable repeat check
+                if off:
+                    # clamping would click the screen edge and waste the turn (and the model's guess count)
+                    history.append(f"saw: {str(decision.get('observe', ''))[:80]} | REJECTED, off-screen point(s) "
+                                   f"{off}: the picture is {sw}x{sh}, give coordinates inside it")
+                    log(f"step {step}: model {t_plan:.2f}s rejected off-screen points {off}")
+                    continue
                 observe = str(decision.get("observe", ""))[:120]
                 summary = json.dumps(actions, separators=(",", ":"))
                 repeated = actions and batches[-2:] == [summary, summary]
