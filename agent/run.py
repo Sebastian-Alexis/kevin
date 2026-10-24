@@ -491,7 +491,9 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                           else f"pixel coordinates in this {sw}x{sh} screenshot")
             if grounder:
                 coord_text = ('omit "@x,y": a separate vision model locates each target from your description, so make '
-                              'the description specific (text on the element, where it is)')
+                              'the description specific: text on or near the element, and the dialog or window it is in '
+                              'when another window is visible behind (e.g. "URL field in the Add MCP Server dialog", not '
+                              '"URL input": the model would take the browser address bar)')
             t_cap = time.monotonic() - t0
             # The last turns only: on long tasks the prompt grew to ~7k tokens by turn 30, slowing every call
             recent = history[-HISTORY_TURNS:]
