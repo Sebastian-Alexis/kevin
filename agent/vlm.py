@@ -58,6 +58,17 @@ class VLM:
             headers["Authorization"] = "Bearer " + self.key
         req = urllib.request.Request(self.url, json.dumps(body).encode(), headers)
         t0 = time.monotonic()
-        with urllib.request.urlopen(req, timeout=180) as r:
-            out = json.load(r)
+        for attempt in range(3):   # cloud routes return the odd 502/529; one bad call must not end a run
+            try:
+                with urllib.request.urlopen(req, timeout=180) as r:
+                    out = json.load(r)
+                break
+            except urllib.error.HTTPError as e:
+                if e.code < 500 or attempt == 2:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
+            except (urllib.error.URLError, TimeoutError):
+                if attempt == 2:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
         return out["choices"][0]["message"]["content"], out.get("usage", {}), time.monotonic() - t0
