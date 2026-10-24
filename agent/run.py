@@ -8,6 +8,7 @@ point_2d format (0-1000 over the screen picture), which grounds as precisely as 
 open_app brings an app to the front through the OS launcher, checked with two small yes/no crops.
 """
 import argparse
+import io
 import json
 import os
 import re
@@ -106,6 +107,12 @@ def parse_action(s):
         return [{kind: spec}]
     verb, _, rest = s.partition(" ")
     verb = verb.lower()
+    if verb in CLICKS or verb == "scroll":   # no "@x,y": a bare target, to be grounded by the grounder model
+        m2 = re.match(r"^(.*?)(?:\s+(-?\d+))?$", rest.strip(), re.S)
+        spec = {"target": m2.group(1).strip(), "point_2d": None}
+        if verb == "scroll":
+            spec["ticks"] = int(m2.group(2)) if m2.group(2) else -3
+        return [{verb: spec}]
     if verb == "type":
         return [{"type": rest}]
     if verb == "key":
@@ -418,8 +425,27 @@ def show_all(kvm, vlm):
     return False
 
 
+def ground(grounder, screen, target):
+    """0-1000 point of a described element from a grounding model (Holo4 on :8010, its native click tool). Returns
+    None when it finds nothing, which the off-screen check turns into a refused batch."""
+    from .holo import TOOLS, chat   # local import: holo imports this module's rails
+    import base64
+    buf = io.BytesIO()
+    screen.save(buf, format="JPEG", quality=80)
+    part = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()}}
+    msgs = [{"role": "system", "content": "You are a computer-use agent operating a computer through the available tools."},
+            {"role": "user", "content": f"Click on: {target}"},
+            {"role": "user", "content": [{"type": "text", "text": "<observation>\n"}, part, {"type": "text", "text": "\n</observation>"}]}]
+    msg, _, _ = chat(grounder["url"], grounder["key"], grounder["model"], msgs, False, 120)
+    for call in msg.get("tool_calls") or []:
+        args = json.loads(call["function"].get("arguments") or "{}")
+        if "x" in args and "y" in args:
+            return [int(args["x"]), int(args["y"])]
+    return None
+
+
 def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=False, save_dir=None, log=print,
-        coords="norm", app=None):
+        coords="norm", app=None, grounder=None):
     """Drive the computer until the model reports the task done or impossible. An app the task names is brought
     to the front before the first look (on macOS with the other apps hidden until the run ends)."""
     history, batches, frame = [], [], None
@@ -452,6 +478,9 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             # Qwen grounds on a 0-1000 grid; Anthropic models answer in pixels of the picture they were given
             coord_text = ("normalized 0-1000" if coords == "norm"
                           else f"pixel coordinates in this {sw}x{sh} screenshot")
+            if grounder:
+                coord_text = ('omit "@x,y": a separate vision model locates each target from your description, so make '
+                              'the description specific (text on the element, where it is)')
             t_cap = time.monotonic() - t0
             # The last turns only: on long tasks the prompt grew to ~7k tokens by turn 30, slowing every call
             recent = history[-HISTORY_TURNS:]
@@ -467,9 +496,22 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
             try:
                 decision = parse(reply)
                 actions = split_actions(decision.get("actions", []))
+                if grounder:
+                    # all of a batch's targets at once: vLLM batches the requests, ~1.3 s total instead of per click
+                    from concurrent.futures import ThreadPoolExecutor
+                    specs = [spec for a in actions for kind, spec in a.items() if kind in CLICKS or kind == "scroll"]
+                    t_g = time.monotonic()
+                    with ThreadPoolExecutor(max(1, len(specs))) as ex:
+                        for spec, pt in zip(specs, ex.map(lambda s: ground(grounder, screen, s["target"]), specs)):
+                            spec["point_2d"] = pt
+                    if specs:
+                        log(f"  grounded {[(s['target'], s['point_2d']) for s in specs]} ({time.monotonic() - t_g:.2f}s)")
                 off = []
                 for a in actions:
                     for spec in a.values():
+                        if isinstance(spec, dict) and "point_2d" in spec and spec["point_2d"] is None:
+                            off.append(f"{spec.get('target', '?')} (not found on screen)")
+                            continue
                         if isinstance(spec, dict) and isinstance(spec.get("point_2d"), list) and len(spec["point_2d"]) == 2:
                             x, y = spec["point_2d"]
                             lim = (sw, sh) if coords != "norm" else (1000, 1000)
@@ -575,13 +617,19 @@ def main(argv=None):
     p.add_argument("--save-dir")
     p.add_argument("--dry-run", action="store_true", help="ask the model but do not send HID actions")
     p.add_argument("--app", help="app to raise and isolate in (Hide Others) when the task text does not name one")
+    p.add_argument("--grounder", default=None, help="grounding endpoint (e.g. http://127.0.0.1:8010/v1): the planner names targets, this model locates them")
+    p.add_argument("--grounder-model", default="holo4")
     a = p.parse_args(argv)
     if a.save_dir:
         os.makedirs(a.save_dir, exist_ok=True)
     vlm = VLM(a.llm, a.model, key=load_key(a.key_file), max_side=a.max_side)
     coords = a.coords or ("pixels" if any(k in a.model.lower() for k in ("claude", "anthropic")) else "norm")
+    grounder = ({"url": a.grounder.rstrip("/") + "/chat/completions", "model": a.grounder_model, "key": load_key(a.key_file)}
+                if a.grounder else None)
+    if grounder:
+        coords = "norm"   # Holo4 answers on the 0-1000 grid
     result = run(a.task, KVM(a.kvm), vlm, a.os_name, a.max_steps, a.settle_max, a.dry_run, a.save_dir, coords=coords,
-                 app=a.app)
+                 app=a.app, grounder=grounder)
     print(json.dumps(result))
     return 0 if result["done"] else 1
 
