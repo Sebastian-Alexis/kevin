@@ -7,8 +7,8 @@ dtparam=i2c_arm=on
 #dtparam=i2s=on
 #dtparam=spi=on
 
-# Enable audio (loads snd_bcm2835)
-dtparam=audio=on
+# ai-kvm: no audio out (saves power; the Pi runs off the target's USB-C port)
+dtparam=audio=off
 
 # Additional overlays and parameters are documented
 # /boot/firmware/overlays/README
@@ -16,8 +16,8 @@ dtparam=audio=on
 # Automatically load overlays for detected cameras
 camera_auto_detect=0
 
-# Automatically load overlays for detected DSI displays
-display_auto_detect=1
+# Automatically load overlays for detected DSI displays (none on a KVM)
+display_auto_detect=0
 
 # Automatically load initramfs files, if found
 auto_initramfs=1
@@ -52,6 +52,8 @@ dtoverlay=nospi10
 # --- ai-kvm ---
 # USB OTG peripheral mode for HID (keyboard/mouse) gadget to the target host
 dtoverlay=dwc2,dr_mode=peripheral
-# Toshiba TC358743 HDMI->CSI-2 bridge (HDMI capture)
+# Toshiba TC358743 HDMI->CSI-2 bridge (HDMI capture). 297 MHz link: 720p60 uses both CSI lanes (at the default
+# 486 MHz it picks one lane and unicam receives nothing)
 dtoverlay=tc358743,link-frequency=297000000
-# PiSugar UPS speaks I2C (enabled above via dtparam=i2c_arm=on)
+# Bluetooth off: unused, and the Pi is powered by the target's USB-C port (undervoltage on hub ports)
+dtoverlay=disable-bt

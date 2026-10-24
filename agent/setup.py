@@ -330,7 +330,14 @@ def first_contact(kvm, vlm, log=print, usb_timeout=120, signal_timeout=45):
         mark("mirroring_s")
         img = settled(kvm, timeout=4) or img   # judge the finished mirror setup, not the switch animation
     if img is not None and not pillarboxed(img):
-        # mirroring with the KVM as master: the Mac's own panel is running at the KVM's 720p
+        # mirroring with the KVM as master: the Mac's own panel is running at the KVM's 720p. The fix below is
+        # macOS-only, so first make sure this is a Mac (Windows/Linux extend a new display by default instead).
+        mac_q = "Is this the macOS menu bar, with the Apple logo at its left end?"
+        is_mac = any((reveal_menu_bar(kvm), ask_yes(kvm, vlm, mac_q, MENU_BAR_LEFT))[1] for _ in range(2))
+        if not is_mac:
+            report["problem"] = ("display fills the KVM frame but the target doesn't look like a Mac: set the KVM "
+                                 "display to mirror/duplicate the main screen (Windows: Win+P > Duplicate)")
+            return report
         try:
             restored = optimize_for_mac(kvm, vlm, log)
         except RuntimeError as e:
