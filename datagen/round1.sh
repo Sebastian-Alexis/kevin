@@ -13,10 +13,10 @@ $PY datagen/web_grounding.py -n "$N_WEB" &
 wait
 $PY datagen/action_templates.py --from osatlas,web,ax -n "$N_TPL"
 
-if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+if [ -n "${REPHRASE:-}" ]; then   # off for round 1 so we can measure its effect later
   $PY datagen/rephrase.py --source osatlas,web,ax --rate 0.6
 else
-  echo "skipping rephrase (no ANTHROPIC_API_KEY): template intents only"
+  echo "rephrase off (REPHRASE=1 to enable): template intents only"
 fi
 
 $PY training/build_dataset.py --mix ax=0.3,web=0.25,osatlas=0.25,templates=0.2

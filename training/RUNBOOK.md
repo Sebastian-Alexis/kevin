@@ -17,10 +17,9 @@ Snapshot the instance once this finishes so the next box boots ready.
 
 ## 2. Zero-shot baselines (do this before training, it's the "before" number)
 ```bash
-source .venv-train/bin/activate
 training/serve.sh base &          # GUI-Owl-1.5-4B
-python training/eval_grounding.py --split val  --model base --show 5
-python training/eval_grounding.py --split gold --model base           # if the gold set exists
+.venv-serve/bin/python training/eval_grounding.py --split val  --model base --show 5
+.venv-serve/bin/python training/eval_grounding.py --split gold --model base           # if the gold set exists
 kill %1; training/serve.sh alt &  # Qwen3-VL-4B, same evals, then kill
 ```
 If eval prints `looks like PIXELS`, GUI-Owl isn't using 0..1000: try its native prompt with
@@ -29,7 +28,7 @@ If eval prints `looks like PIXELS`, GUI-Owl isn't using 0..1000: try its native 
 ## 3. Train
 ```bash
 tmux new -s train
-llamafactory-cli train training/lora_sft.yaml
+.venv-train/bin/llamafactory-cli train training/lora_sft.yaml
 ```
 ~10k samples x 2 epochs is roughly 1-2 h on an L40S. Watch `training/saves/gui-owl-4b-lora/trainer_log.jsonl`.
 
@@ -37,7 +36,7 @@ llamafactory-cli train training/lora_sft.yaml
 ```bash
 training/serve.sh lora &          # serves "base" and "actor" side by side
 for m in base actor; do for s in val holdout gold; do
-  python training/eval_grounding.py --split $s --model $m; done; done
+  .venv-serve/bin/python training/eval_grounding.py --split $s --model $m; done; done
 ```
 
 ## 5. Serve for the agent

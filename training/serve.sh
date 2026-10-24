@@ -11,6 +11,7 @@ LORA=${LORA:-training/saves/gui-owl-4b-lora}
 MERGED=${MERGED:-training/saves/gui-owl-4b-merged}
 PORT=${PORT:-8000}
 MAX_PIXELS=1003520   # must match lora_sft.yaml image_max_pixels
+[ -x .venv-serve/bin/vllm ] && export PATH="$PWD/.venv-serve/bin:$PATH"
 
 common=(--host 127.0.0.1 --port "$PORT" --max-model-len 8192 --trust-remote-code
         --limit-mm-per-prompt '{"image":1}' --mm-processor-kwargs "{\"max_pixels\":$MAX_PIXELS}"
