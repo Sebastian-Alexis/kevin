@@ -1,0 +1,10 @@
+model_name_or_path: mPLUG/GUI-Owl-1.5-8B-Instruct
+adapter_name_or_path: training/saves/owl8b-ground-lora
+template: qwen3_vl_nothink
+trust_remote_code: true
+finetuning_type: lora
+
+export_dir: training/saves/owl8b-ground-merged
+export_size: 5
+export_device: cpu
+export_legacy_format: false

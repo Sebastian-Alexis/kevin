@@ -1,0 +1,51 @@
+### grounder student: screenshot + target -> {"point_2d": [x, y]} (shared/ground.py), teacher-checked data
+### build first: training/build_grounding.py pool, eval_point.py (teacher labels), build_grounding.py export
+model_name_or_path: mPLUG/GUI-Owl-1.5-8B-Instruct
+image_max_pixels: 1003520          # = capture cap; keep identical to vLLM --mm-processor-kwargs max_pixels
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: all
+freeze_vision_tower: true
+freeze_multi_modal_projector: true
+
+### dataset
+dataset_dir: data/export
+media_dir: data
+dataset: ground_train
+eval_dataset: ground_val
+template: qwen3_vl_nothink
+cutoff_len: 4096
+overwrite_cache: true
+preprocessing_num_workers: 12   # RunPod H200 pod: cgroup quota is ~13.6 CPUs although nproc says 128
+dataloader_num_workers: 4
+
+### output
+output_dir: training/saves/owl8b-ground-lora
+logging_steps: 10
+save_steps: 500
+plot_loss: true
+overwrite_output_dir: true
+report_to: none
+
+### train  (H200 141GB)
+per_device_train_batch_size: 16
+gradient_accumulation_steps: 2
+learning_rate: 1.0e-4
+num_train_epochs: 1.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+
+### eval
+per_device_eval_batch_size: 16
+eval_strategy: steps
+eval_steps: 100
