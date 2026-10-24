@@ -75,6 +75,45 @@ from a cluttered desktop (terminal floating on top, App Store in front of the br
 The Pi's own API (`pi/api/server.py`) is usable directly: `GET /health`, `GET /screenshot`,
 `POST /actions` with move/click/drag/scroll/type/key/wait batches.
 
+## The KVM as an MCP server, Droid as the planner
+
+The computer under control is also exposed as an MCP server running **on the KVM** (`agent/kvm_mcp.py`,
+`ai-kvm-mcp.service`, streamable HTTP on `:8090/mcp`). Any MCP client gets four tools and nothing else:
+
+| tool | what it does |
+| --- | --- |
+| `begin(task)` | starts a run: resets focus tracking, opens a run folder (`/var/lib/ai-kvm/runs/<id>/` with every frame and `events.jsonl`), returns the screenshot |
+| `look()` | fresh screenshot of the target (pixels of the picture are the coordinate system) |
+| `act(actions, expect)` | one batch in the action grammar (`click <target>`, `key cmd+l`, `type ...`, `scroll <target> -N`, `wait`, `open_app`), then a local model checks the screen shows `expect`; returns what ran, what was refused and why, the verdict, and the screenshot after |
+| `open_app(name)` | brings an app to the front through the OS launcher |
+
+The rails live inside the server, so they bind every planner the same way: targets named in words are located by
+the grounder (Holo4) on the frame at execution time, off-screen or unfound points refuse the whole batch,
+keystrokes with nowhere to go are refused, Enter after typed text is gated on where the text landed, and the
+`expect` check (qwen27) tells the planner whether its plan still holds without a round trip for a new screenshot.
+The grounder and verifier are local models on the controller, reached from the KVM over the dev AP
+(`provisioning/host/ai-kvm-models.service` forwards them, and forwards the MCP port to Tailscale peers).
+
+**Where Droid runs.** [Factory's Droid](https://docs.factory.ai/sdk/python) is the planner: `agent/droid.py`
+opens a Droid SDK session whose only reachable surface is this MCP server (Droid's shell, file and web tools are
+disabled; the permission handler cancels anything that is not an `ai-kvm` tool call), and streams the session.
+
+    .venv-droid/bin/python -m agent.droid "In the Helium browser, go to example.com and report the heading"
+    .venv-droid/bin/python -m agent.droid --inbox /var/lib/ai-kvm/inbox     # the trigger
+
+The trigger is the inbox: drop `<name>.task` (a text file with the task) and a run starts as soon as the KVM
+daemon reports the computer ready (`/run/ai-kvm/state.json`); `<name>.report.md` (every tool call, every
+refusal and verdict, every frame Droid saw, token and credit usage) and `<name>.events.jsonl` land next to it.
+A cron, an HTTP hook or another agent only needs to write a file. One-off runs write `runs/<timestamp>.report.md`.
+
+Droid's models come through BYOK (`~/.factory/settings.json` custom models pointing at `agent/omp_gateway.py`,
+the local Anthropic/OpenAI-compatible front for the models omp is logged into), so a run costs no Factory credits.
+The same server is registered in the Factory desktop app on the Mac as connector `ai-kvm` (added by this agent
+driving the app over the KVM, see `agent/run.py`), so an interactive Droid session there has the same four tools.
+
+Deploy to the KVM: `bash agent/deploy-mcp.sh` (rsyncs the `agent` package, builds the venv from offline wheels,
+installs the key and the unit).
+
 ## Setup
 
 - Pi: `provisioning/README.md` (flash, `pi/install.sh`, `pi/net/use-networkd.sh`).
