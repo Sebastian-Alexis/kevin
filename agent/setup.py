@@ -229,31 +229,48 @@ def optimize_for_mac(kvm, vlm, log):
     return restored is not None
 
 
-def pointer_error(kvm, points=((300, 300), (700, 650))):
+def cursor_tip(kvm, nx, ny):
+    """Where the cursor appears (0-1000) after moving it to (nx, ny), or None if the frame difference near the
+    target isn't cursor-shaped (another part of the screen was changing)."""
+    fx, fy = to_hid(nx, ny)
+    kvm.actions([{"type": "move", "x": fx, "y": min(0.95, fy + 0.18)}])
+    time.sleep(0.3)
+    away = kvm.screenshot()
+    kvm.actions([{"type": "move", "x": fx, "y": fy}])
+    time.sleep(0.3)
+    here = kvm.screenshot()
+    rect = content_rect(here)
+    diff = ImageChops.difference(here.crop(rect), away.crop(rect)).convert("L").point(lambda v: 255 if v > 40 else 0)
+    w, h = diff.size
+    cx, cy = nx / 1000 * w, ny / 1000 * h
+    box = (max(0, int(cx - 60)), max(0, int(cy - 60)), min(w, int(cx + 60)), min(h, int(cy + 60)))
+    bbox = diff.crop(box).getbbox()
+    if not bbox or bbox[2] - bbox[0] > 40 or bbox[3] - bbox[1] > 45:   # a macOS arrow is ~20x30 px at 720p
+        return None
+    # the cursor's hotspot is the top-left of the arrow
+    return (box[0] + bbox[0]) / w * 1000, (box[1] + bbox[1]) / h * 1000
+
+
+def pointer_error(kvm, points=((300, 300), (700, 650)), tries=3):
     """Max distance (0-1000 grid) between where the pointer was sent and where it shows up in the capture.
 
     Finds the cursor by differencing frames with the pointer parked just below each target vs on it, so no
-    model call is needed (parking stays off screen corners: macOS hot corners trigger there)."""
+    model call is needed (parking stays off screen corners: macOS hot corners trigger there). Each point takes
+    the best of a few tries: a real mapping error is consistent, a window animating nearby is not."""
+    settled(kvm, timeout=2)
     errors = []
     for nx, ny in points:
-        fx, fy = to_hid(nx, ny)
-        kvm.actions([{"type": "move", "x": fx, "y": min(0.95, fy + 0.18)}])
-        time.sleep(0.3)
-        away = kvm.screenshot()
-        kvm.actions([{"type": "move", "x": fx, "y": fy}])
-        time.sleep(0.3)
-        here = kvm.screenshot()
-        rect = content_rect(here)
-        diff = ImageChops.difference(here.crop(rect), away.crop(rect)).convert("L").point(lambda v: 255 if v > 40 else 0)
-        w, h = diff.size
-        # the cursor tip is the top-left of its blob; search a window around the target
-        cx, cy = nx / 1000 * w, ny / 1000 * h
-        box = (max(0, int(cx - 60)), max(0, int(cy - 60)), min(w, int(cx + 60)), min(h, int(cy + 60)))
-        bbox = diff.crop(box).getbbox()
-        if not bbox:
+        best = None
+        for _ in range(tries):
+            tip = cursor_tip(kvm, nx, ny)
+            if tip is not None:
+                err = max(abs(tip[0] - nx), abs(tip[1] - ny))
+                best = err if best is None else min(best, err)
+                if best <= 10:
+                    break
+        if best is None:
             return None
-        tip_x, tip_y = box[0] + bbox[0], box[1] + bbox[1]
-        errors.append(max(abs(tip_x / w * 1000 - nx), abs(tip_y / h * 1000 - ny)))
+        errors.append(best)
     return round(max(errors))
 
 
