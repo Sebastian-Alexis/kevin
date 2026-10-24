@@ -9,6 +9,8 @@
 set -eu
 SSID=${1:?ssid}
 PSK=${2:-}
+# the dev AP's frequency (ai-kvm-ap: channel 6). Pinning it skips a ~2 s all-channel scan; empty = scan all
+FREQ=${AIKVM_WIFI_FREQ-2437}
 if [ -z "$PSK" ]; then
   PSK=$(grep -lx "ssid=$SSID" /etc/NetworkManager/system-connections/*.nmconnection \
           /run/NetworkManager/system-connections/*.nmconnection 2>/dev/null | head -1 | xargs -r sed -n 's/^psk=//p')
@@ -21,7 +23,8 @@ umask 077
   echo "ctrl_interface=DIR=/run/wpa_supplicant GROUP=netdev"
   echo "update_config=0"
   echo "country=US"
-  wpa_passphrase "$SSID" "$PSK" | grep -v '#psk='
+  wpa_passphrase "$SSID" "$PSK" | grep -v '#psk=' |
+    if [ -n "$FREQ" ]; then sed "s/^}$/\tscan_freq=$FREQ\n\tfreq_list=$FREQ\n}/"; else cat; fi
 } > /etc/wpa_supplicant/wpa_supplicant-wlan0.conf
 umask 022
 
@@ -52,11 +55,19 @@ Before=network.target
 
 [Service]
 ExecStartPre=-/usr/sbin/rfkill unblock wifi
+# power save delays the first packet after idle (screenshots/actions are latency-sensitive)
+ExecStartPost=-/usr/sbin/iw dev wlan0 set power_save off
 EOF
+
+# load the Wi-Fi driver from systemd-modules-load instead of waiting for udev coldplug (~2.4 s earlier)
+echo brcmfmac > /etc/modules-load.d/brcmfmac.conf
 
 systemctl daemon-reload
 systemctl disable NetworkManager.service NetworkManager-wait-online.service 2>/dev/null || true
 systemctl enable systemd-networkd.service wpa_supplicant@wlan0.service
+# the D-Bus wpa_supplicant (NetworkManager's) is redundant with wpa_supplicant@wlan0; nothing should wait on
+# network-online (an unplugged eth0 would stall it)
+systemctl mask wpa_supplicant.service systemd-networkd-wait-online.service
 # cloud-init only matters for the first boot and costs ~5 s on every later one
 touch /etc/cloud/cloud-init.disabled
 echo "networkd configured for $SSID; takes effect on next boot"

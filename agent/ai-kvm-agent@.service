@@ -1,0 +1,20 @@
+[Unit]
+Description=ai-kvm controller: auto-setup the computer the KVM is plugged into
+After=network-online.target ai-kvm-ap.service
+Wants=network-online.target
+
+[Service]
+User=%i
+# repo checkout on the controller (see agent/install.sh)
+WorkingDirectory=/opt/ai-kvm-controller
+ExecStart=/usr/local/bin/python3 -m agent.daemon
+# vLLM API key handed to the service without copying it anywhere readable
+LoadCredential=llm-key:/etc/gemma4-vllm-api-key
+Environment=AIKVM_LLM_KEY_FILE=%d/llm-key AIKVM_STATE=/run/ai-kvm/state.json
+RuntimeDirectory=ai-kvm
+RuntimeDirectoryPreserve=yes
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
