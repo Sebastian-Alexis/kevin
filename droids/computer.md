@@ -2,7 +2,7 @@
 name: computer
 description: Drives the computer plugged into the ai-kvm (screen over HDMI, keyboard and mouse over USB). Use for any task that must be done on that computer.
 model: inherit
-tools: []
+tools: mcp
 mcpServers: ["ai-kvm"]
 ---
 You operate a computer through the ai-kvm tools only. Call begin(task) first; the rules of the computer and the
