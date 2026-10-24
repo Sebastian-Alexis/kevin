@@ -40,6 +40,7 @@ Actions (point_2d = [x, y] center of the element, normalized 0-1000; target = sh
 Rules:
 - Keystrokes go to the focused window. Right after open_app the app has keyboard focus, so its shortcuts work directly (e.g. cmd+t, cmd+l). Otherwise, before any "type" or "key", click the exact field or window you mean in the same turn.
 - Windows overlap and look alike: whenever you are not sure the task's app is the frontmost window, open_app it.
+- Do every step the task names, in order; never skip one (e.g. open the new tab it asks for before searching).
 - Never type into terminals, chats or apps the task does not name.
 - Only target things visible in this screenshot; for anything not visible yet, end the turn and look again.
 - If the last turn did not work, do something different instead of repeating it.
@@ -77,15 +78,31 @@ TURN_SCHEMA = {
 
 
 def parse(text):
-    """First balanced JSON object in the model reply (tolerates ```json fences)."""
+    """The JSON object in a model reply: the whole reply (schema-constrained), else the first balanced object
+    (free-form replies may wrap it in ```json fences). Braces inside strings don't count."""
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
     start = text.find("{")
     if start < 0:
         raise ValueError(f"no JSON object in reply: {text[:200]!r}")
-    depth = 0
+    depth, in_str, escaped = 0, False, False
     for i in range(start, len(text)):
-        depth += {"{": 1, "}": -1}.get(text[i], 0)
-        if depth == 0:
-            return json.loads(text[start:i + 1])
+        c = text[i]
+        if escaped:
+            escaped = False
+        elif in_str:
+            escaped = c == "\\"
+            in_str = c != '"'
+        elif c == '"':
+            in_str = True
+        elif c in "{}":
+            depth += 1 if c == "{" else -1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
     raise ValueError(f"unterminated JSON in reply: {text[:200]!r}")
 
 
@@ -390,8 +407,10 @@ def run(task, kvm, vlm, os_name="macOS", max_steps=20, settle_max=2.0, dry_run=F
                         focused = focused and not any(a["type"] == "click" for a in arg)
                     elif kind == "gate":
                         if not typed_where_wanted(kvm, vlm, task, arg):
-                            notes.insert(0, f'Enter NOT pressed and the rest of the turn skipped: "{arg}" did not '
-                                            'show up in an input that fits the task')
+                            notes.insert(0, f'Enter NOT pressed: "{arg}" was typed but did not show up in an input '
+                                            'that fits the task, so the keyboard focus is somewhere else. Move it '
+                                            'into the right input first (the app\'s shortcut for it, e.g. cmd+l or '
+                                            'cmd+t in a browser, or click the input), then type again')
                             done = False
                             break
                     else:
