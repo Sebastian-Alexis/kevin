@@ -31,6 +31,7 @@ from shared import actions  # noqa: E402
 
 PROMPT = (ROOT / "shared" / "actor_prompt.txt").read_text().strip()
 OWL_SYSTEM = (ROOT / "shared" / "gui_owl_grounding_system.txt").read_text()
+LOOSE_CLICK = re.compile(r'"x"\s*:\s*(\d+)\s*,\s*(?:"y"\s*:\s*)?(\d+)')  # tolerates {"x":662, 516}
 OWL_COORD = re.compile(r"\[\s*(\d+)\s*,\s*(\d+)\s*\]|\((\d+),\s*(\d+)\)")
 
 
@@ -62,7 +63,15 @@ def score(rec, raw, args):
     if args.native_owl:
         raw = owl_to_action(raw)
     is_click = gold["action"] == "click"
-    res = {"type_ok": False, "hit": False if is_click else None, "exact": None if is_click else False, "raw": raw}
+    res = {"type_ok": False, "hit": False if is_click else None, "exact": None if is_click else False, "raw": raw,
+           "valid": False, "loose_hit": False if is_click else None}
+    bbox = rec["meta"].get("bbox")
+    if is_click and '"click"' in raw:
+        m = LOOSE_CLICK.search(raw)
+        if m:
+            x, y = int(m.group(1)), int(m.group(2))
+            res["loose_hit"] = (actions.point_in_bbox(x, y, bbox, args.pad) if bbox else
+                                abs(x - gold["x"]) <= args.radius and abs(y - gold["y"]) <= args.radius)
     try:
         pred = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
     except ValueError:
@@ -72,9 +81,9 @@ def score(rec, raw, args):
         pred = actions.validate(pred)
     except actions.ActionError:
         return res
+    res["valid"] = True
     res["type_ok"] = pred["action"] == gold["action"]
     if gold["action"] == "click":
-        bbox = rec["meta"].get("bbox")
         if res["type_ok"]:
             res["hit"] = (actions.point_in_bbox(pred["x"], pred["y"], bbox, args.pad) if bbox else
                           abs(pred["x"] - gold["x"]) <= args.radius and abs(pred["y"] - gold["y"]) <= args.radius)
@@ -98,6 +107,7 @@ def main():
     ap.add_argument("--radius", type=int, default=20, help="hit radius when no bbox")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--show", type=int, default=0, help="print N raw outputs")
+    ap.add_argument("--save", help="write per-sample results as jsonl here")
     ap.add_argument("--export", default=str(DATA / "export"))
     args = ap.parse_args()
 
@@ -133,7 +143,10 @@ def main():
             by_src.setdefault(rec["meta"]["source"], []).append(r["hit"])
 
     print(f"model={args.model} split={args.split} n={len(results)}")
-    print(f"  click hit rate   {sum(r['hit'] for r in clicks) / max(1, len(clicks)):.1%}  (n={len(clicks)})")
+    print(f"  valid output     {sum(r['valid'] for _, r, _ in results) / len(results):.1%}  (parses + passes schema)")
+    print(f"  click hit rate   {sum(r['hit'] for r in clicks) / max(1, len(clicks)):.1%}  (n={len(clicks)}, strict)")
+    print(f"  click hit loose  {sum(r['loose_hit'] for r in clicks) / max(1, len(clicks)):.1%}  "
+          f"(coords read from malformed output too: the model's aim)")
     for s, hits in sorted(by_src.items()):
         print(f"    {s:12s} {sum(hits) / len(hits):.1%}  (n={len(hits)})")
     print(f"  action type acc  {sum(r['type_ok'] for _, r, _ in results) / len(results):.1%}")
@@ -142,6 +155,12 @@ def main():
     if xs:
         print(f"  raw coord range  x {min(xs)}..{max(xs)}  y {min(ys)}..{max(ys)}"
               + ("   <-- looks like PIXELS, not 0..1000" if max(xs + ys) > 1000 else ""))
+    if args.save:
+        with open(args.save, "w") as f:
+            for rec, r, ms in results:
+                f.write(json.dumps({"id": rec["meta"]["id"], "source": rec["meta"]["source"], "gold": rec["messages"][1]["content"],
+                                    "raw": r["raw"], "hit": r["hit"], "loose_hit": r["loose_hit"], "exact": r["exact"],
+                                    "valid": r["valid"], "ms": round(ms)}) + "\n")
     for rec, r, _ in results[: args.show]:
         print(f"  - {rec['messages'][0]['content'].rsplit('Instruction: ', 1)[-1]!r}\n      gold {rec['messages'][1]['content']}"
               f"\n      pred {r['raw'].strip()[:160]}")
