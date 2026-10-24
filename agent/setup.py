@@ -134,9 +134,9 @@ def find(kvm, vlm, target, check, log, timeout=6.0, retry=None):
 
 def reveal_menu_bar(kvm):
     """Touch the top edge (and wiggle) so an auto-hidden menu bar slides in."""
-    kvm.actions([{"type": "move", "x": 0.5, "y": 0.02}, {"type": "wait", "ms": 60},
-                 {"type": "move", "x": 0.5, "y": 0.0}, {"type": "wait", "ms": 60},
-                 {"type": "move", "x": 0.52, "y": 0.0}, {"type": "wait", "ms": 700}])
+    kvm.actions([{"type": "move", "x": 0.5, "y": 0.02}, {"type": "wait", "ms": 40},
+                 {"type": "move", "x": 0.5, "y": 0.0}, {"type": "wait", "ms": 40},
+                 {"type": "move", "x": 0.52, "y": 0.0}, {"type": "wait", "ms": 450}])
 
 
 def ask_yes(kvm, vlm, question):
@@ -152,22 +152,35 @@ def ask_yes(kvm, vlm, question):
 SETTINGS_FRONT = 'Does the menu bar show "System Settings" as the active app name next to the Apple logo?'
 
 
+# With the KVM as mirror master the Mac runs the KVM's only mode, 1280x720, so the Apple menu is laid out
+# identically on every Mac: logo at the top-left corner, "System Settings..." as the second item.
+APPLE_LOGO_720P = (16, 17)
+SYSTEM_SETTINGS_ITEM_720P = (78, 115)
+
+
 def open_system_settings(kvm, vlm, log, attempts=3):
     """Apple menu > System Settings..., confirmed by the menu bar naming it the active app. The Apple logo is
-    unambiguous, unlike picking the Screen Mirroring icon out of a dozen third-party status icons."""
-    for _ in range(attempts):
+    unambiguous, unlike picking the Screen Mirroring icon out of a dozen third-party status icons.
+    First try clicks the known 720p positions (no model calls); later tries ground both clicks with the model."""
+    for attempt in range(attempts):
         reveal_menu_bar(kvm)
-        ax, ay = find(kvm, vlm, "the Apple logo at the far left end of the menu bar", lambda x, y: x < 80 and y < 45,
-                      log, retry=lambda: reveal_menu_bar(kvm))
-        click(kvm, ax, ay)
-        time.sleep(0.5)
-        # the item sits in the dropped-down menu, clearly below the menu bar (~33 units tall at 720p)
-        sx, sy = find(kvm, vlm, 'the "System Settings..." item in the open Apple menu',
-                      lambda x, y: x < 400 and ay + 30 < y < 450, log,
-                      retry=lambda: (reveal_menu_bar(kvm), click(kvm, ax, ay)))
+        if attempt == 0:
+            ax, ay = APPLE_LOGO_720P
+            click(kvm, ax, ay)
+            time.sleep(0.4)
+            sx, sy = SYSTEM_SETTINGS_ITEM_720P
+        else:
+            ax, ay = find(kvm, vlm, "the Apple logo at the far left end of the menu bar",
+                          lambda x, y: x < 80 and y < 45, log, retry=lambda: reveal_menu_bar(kvm))
+            click(kvm, ax, ay)
+            time.sleep(0.5)
+            # the item sits in the dropped-down menu, clearly below the menu bar (~33 units tall at 720p)
+            sx, sy = find(kvm, vlm, 'the "System Settings..." item in the open Apple menu',
+                          lambda x, y: x < 400 and ay + 30 < y < 450, log,
+                          retry=lambda: (reveal_menu_bar(kvm), click(kvm, ax, ay)))
         click(kvm, sx, sy)
         # a cold launch of System Settings can take several seconds: poll before deciding it failed
-        if wait_for(lambda: (reveal_menu_bar(kvm), ask_yes(kvm, vlm, SETTINGS_FRONT))[1], 7, interval=0.3):
+        if wait_for(lambda: (reveal_menu_bar(kvm), ask_yes(kvm, vlm, SETTINGS_FRONT))[1], 7, interval=0.2):
             return
         log("  System Settings did not come to the front, retrying")
         kvm.actions([{"type": "key", "combo": "esc"}])
@@ -195,24 +208,23 @@ def optimize_for_mac(kvm, vlm, log):
 
     Every model-provided point is sanity-checked against where that element can be before it is clicked, and
     keyboard shortcuts are only sent once the menu bar confirms System Settings is the active app."""
-    settled(kvm)
     open_system_settings(kvm, vlm, log)
     # other apps' windows (e.g. a terminal set to float on top) can cover System Settings: hide them for now
-    kvm.actions([{"type": "key", "combo": "alt+cmd+h"}, {"type": "wait", "ms": 600}])
+    kvm.actions([{"type": "key", "combo": "alt+cmd+h"}, {"type": "wait", "ms": 400}])
     try:
         qx, qy = find(kvm, vlm, "the Search field at the top of the System Settings window's left sidebar",
                       lambda x, y: y < 450, log, timeout=6)
         click(kvm, qx, qy)
         kvm.actions([{"type": "key", "combo": "cmd+a"}, {"type": "type", "text": "Displays"},
-                     {"type": "wait", "ms": 900}])
+                     {"type": "wait", "ms": 700}])
         dx, dy = find(kvm, vlm, '"Displays" in the System Settings sidebar search results',
                       lambda x, y: abs(x - qx) < 300 and y > qy, log)
         click(kvm, dx, dy)
-        time.sleep(1.0)
+        time.sleep(0.6)
         px, py = find(kvm, vlm, 'the pop-up button showing "ai-kvm" to the right of the "Optimize for" label in the '
                                 'System Settings Displays pane', lambda x, y: x > 400 and 80 < y < 960, log, timeout=8)
         click(kvm, px, py)
-        time.sleep(0.5)
+        time.sleep(0.35)
         # macOS opens the list so the selected item sits on the button: other items appear above/below it
         mx, my = find(kvm, vlm, 'the item in the open pop-up menu that names this Mac (the option that is not '
                                 '"ai-kvm")', lambda x, y: abs(y - py) < 250 and abs(x - px) < 300, log)
