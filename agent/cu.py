@@ -293,6 +293,9 @@ class Session:
             if self.stop:   # the model answered after a stop request: do not touch the computer
                 self.log("stopped by caller"); result = {"done": False, "fail": "stopped", "turns": turn}; break
             for i, c in enumerate(calls):
+                if self.stop:   # cancelled mid-batch: no further input reaches the computer
+                    results.append({"type": "tool_result", "tool_use_id": c["id"], "content": "stopped", "is_error": True})
+                    continue
                 try:
                     note, image = self.do(c["input"])
                     if i == len(calls) - 1 and image is None:
@@ -306,6 +309,8 @@ class Session:
                     if i == len(calls) - 1:
                         results[-1]["content"] = [{"type": "text", "text": f"error: {e}"}, self.shot_block(self.screen(fresh=True))]
             messages.append({"role": "user", "content": results})
+            if self.stop:
+                self.log("stopped by caller (mid-batch)"); result = {"done": False, "fail": "stopped", "turns": turn}; break
             u = out.get("usage", {})
             self.log(f"turn {turn}: model {t_model:.2f}s ({u.get('input_tokens')}+{u.get('cache_read_input_tokens')} cached "
                      f"+{u.get('output_tokens')} out) act+settle {time.monotonic() - t1:.2f}s | {text[:80]} -> "
