@@ -64,8 +64,8 @@ Keystrokes are what can do damage on someone's computer, so:
   terminal that happened to have focus never gets it sent.
 - The same batch three times in a row (refused ones included) ends the run.
 
-This costs ~3 s to open the app, ~3-4 s to show the other apps again and ~0.8 s per gated Enter: a search task
-from a cluttered desktop (terminal floating on top, App Store in front of the browser) takes 13-16 s end to end.
+This costs ~3 s to open the app, ~3-5 s to show the other apps again and ~0.8 s per gated Enter: a search task
+from a cluttered desktop (terminal floating on top, App Store in front of the browser) takes 12-16 s end to end.
 
 The Pi's own API (`pi/api/server.py`) is usable directly: `GET /health`, `GET /screenshot`,
 `POST /actions` with move/click/drag/scroll/type/key/wait batches.
