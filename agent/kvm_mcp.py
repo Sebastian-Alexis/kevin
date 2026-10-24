@@ -59,9 +59,10 @@ def picture(img):
     return ImageContent(type="image", data=base64.b64encode(buf.getvalue()).decode(), mimeType="image/jpeg")
 
 
-@mcp.tool(description="Start a run for `task` (call once first). Returns the run id, the rules of this computer and "
-          "the current screenshot. Coordinates for `computer` are pixels of the screenshots. If the task names a kind "
-          "of app and none is visible, call survey() to see every open window before launching anything.")
+@mcp.tool(description="Start a run for `task` (call once first). Returns the run id, the rules of this computer, the "
+          "current screenshot, then the overview of every open window (what the user already has running: use those "
+          "apps for the task; launch something else only when nothing suitable is open). Coordinates for `computer` "
+          "are pixels of the screenshots.")
 def begin(task: str) -> list:
     c = cu()
     run_id = time.strftime("%Y%m%d-%H%M%S")
@@ -69,15 +70,20 @@ def begin(task: str) -> list:
     c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
     os.makedirs(c.save_dir, exist_ok=True)
     img = c.screen(fresh=True)
+    frame = survey_frame(c.kvm, c.os_name)
+    c.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
+    c.frame = None
+    ov = frame.crop(content_rect(frame))
     record({"begin": len(task), "size": list(img.size)})   # the task text may carry credentials: not persisted
     c.notes = recall(MEMORY, task, COMPUTER) if MEMORY else []
     c.trajectory = []
     text = (f"run {run_id} started. {SYSTEM.format(os=c.os_name)}\n\n" + (notes_text(c.notes) + "\n\n" if c.notes else "")
-            + f"The screen is {img.size[0]}x{img.size[1]}. Batch every action you are confident about in one turn; only "
-            "screenshot/zoom return an image, so end a batch with a screenshot when you need to see the result. Call "
-            "end(outcome, summary) when the task is complete or impossible.")
+            + f"First image: the screen ({img.size[0]}x{img.size[1]}); second image: the overview of every open window "
+            "(now closed again). Batch every action you are confident about in one turn; only screenshot/zoom return an "
+            "image, so end a batch with a screenshot when you need to see the result. Call end(outcome, summary) when "
+            "the task is complete or impossible.")
     c.shot_block(img)   # saves shot01.jpg in the run folder
-    return [TextContent(type="text", text=text), picture(img)]
+    return [TextContent(type="text", text=text), picture(img), picture(ov)]
 
 
 @mcp.tool(description="The overview of every open window on the computer (Mission Control), closed again before "
