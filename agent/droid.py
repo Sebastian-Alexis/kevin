@@ -34,6 +34,17 @@ LOCAL_TOOLS = {"Execute", "Edit", "Create", "Read", "Grep", "Glob", "LS", "Fetch
                "MultiEdit", "Task", "TodoWrite"}
 
 
+def redact(obj):
+    """Typed text never reaches disk: a login task would otherwise persist its password in the report."""
+    if isinstance(obj, dict) and obj.get("action") == "type":
+        return {**obj, "text": "<redacted: %d chars>" % len(str(obj.get("text", "")))}
+    if hasattr(obj, "keys"):
+        return {k: redact(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [redact(v) for v in obj]
+    return obj
+
+
 def plain(o):
     """JSON for the SDK's frozen values (mappingproxy, tuples, dataclasses)."""
     if hasattr(o, "keys"):
@@ -111,9 +122,10 @@ async def run_task(task, mcp_url, model, report, log=print):
                 if isinstance(m, (ToolCall, ToolResult)) and (m.name if isinstance(m, ToolCall) else m.tool_name) in WRAPPERS:
                     continue   # Droid loads and calls MCP tools through these; the KVM tool call itself is logged
                 if isinstance(m, ToolCall):
-                    report.event("call", tool=m.name, input=m.input, id=m.tool_use_id)
-                    report.write(f"**{m.name}** `{json.dumps(m.input, default=str)[:400]}`")
-                    log(f"call {m.name} {json.dumps(m.input, default=str)[:160]}")
+                    shown = redact(m.input)
+                    report.event("call", tool=m.name, input=shown, id=m.tool_use_id)
+                    report.write(f"**{m.name}** `{json.dumps(shown, default=str)[:400]}`")
+                    log(f"call {m.name} {json.dumps(shown, default=str)[:160]}")
                 elif isinstance(m, ToolResult):
                     texts, frames = [], []
                     for b in content_blocks(m.content):

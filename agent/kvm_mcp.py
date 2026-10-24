@@ -64,14 +64,12 @@ def begin(task: str) -> list:
     c.task, c.typed, c.frame = task, None, None
     c.save_dir = os.path.join(os.environ.get("AIKVM_RUNS", "/var/lib/ai-kvm/runs"), run_id)
     os.makedirs(c.save_dir, exist_ok=True)
-    with open(os.path.join(c.save_dir, "task.txt"), "w") as f:
-        f.write(task + "\n")
     img = c.screen(fresh=True)
     frame = survey(c.kvm, c.os_name)
     c.kvm.actions([{"type": "key", "combo": "esc"}, {"type": "wait", "ms": 400}])
     c.frame = None
     ov = frame.crop(content_rect(frame))
-    record({"begin": task, "size": list(img.size)})
+    record({"begin": len(task), "size": list(img.size)})   # the task text may carry credentials: not persisted
     text = (f"run {run_id} started. {SYSTEM.format(os=c.os_name)}\n\nFirst image: the screen "
             f"({img.size[0]}x{img.size[1]}); second image: the overview of every open window (now closed again).")
     c.shot_block(img)   # saves shot01.jpg in the run folder
@@ -97,12 +95,12 @@ def computer(action: str, coordinate: list[int] | None = None, text: str | None 
     try:
         note, image = c.do(inp)
     except Exception as e:
-        record({"computer": inp, "error": str(e)})
+        record({"computer": {**inp, "text": "<redacted>"} if action == "type" else inp, "error": str(e)})
         return [TextContent(type="text", text=f"error: {e}"), picture(c.screen(fresh=True))]
     if image is None:
         c.frame = latest(c.kvm, timeout=2.0, interval=0.0, tolerance=2.0, first_delay=0.25)
         image = c.shot_block(c.screen())
-    record({"computer": inp, "note": note})
+    record({"computer": {**inp, "text": f"<redacted: {len(inp['text'])} chars>"} if action == "type" else inp, "note": note})
     return [TextContent(type="text", text=note or "ok"),
             ImageContent(type="image", data=image["source"]["data"], mimeType="image/jpeg")]
 
