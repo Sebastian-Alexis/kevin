@@ -1,0 +1,51 @@
+### model
+model_name_or_path: mPLUG/GUI-Owl-1.5-4B-Instruct
+image_max_pixels: 1003520          # = capture cap; keep identical to vLLM --mm-processor-kwargs max_pixels
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: all
+freeze_vision_tower: true
+freeze_multi_modal_projector: true
+
+### dataset  (run from repo root; build with training/build_dataset.py first)
+dataset_dir: data/export
+media_dir: data
+dataset: hid_actor_train
+eval_dataset: hid_actor_val
+template: qwen3_vl_nothink
+cutoff_len: 4096
+overwrite_cache: true
+preprocessing_num_workers: 8
+dataloader_num_workers: 4
+
+### output
+output_dir: training/saves/gui-owl-4b-lora
+logging_steps: 10
+save_steps: 200
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none
+
+### train  (L40S 48GB: bs 4 x accum 4; A100 80GB: try bs 8 x accum 2)
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 4
+learning_rate: 5.0e-5
+num_train_epochs: 2.0
+lr_scheduler_type: cosine
+warmup_ratio: 0.05
+bf16: true
+gradient_checkpointing: true
+ddp_timeout: 180000000
+
+### eval
+per_device_eval_batch_size: 4
+eval_strategy: steps
+eval_steps: 200
