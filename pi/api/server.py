@@ -75,15 +75,31 @@ def run_action(a):
         mouse.click(a.get("button", "left"), int(a.get("count", 1)))
     elif t == "drag":
         b = a.get("button", "left")
+        # web/canvas drags sample mousedown/mousemove per animation frame: hover first, hold after the press,
+        # move in frame-paced steps, and settle before releasing, or the page sees a click instead of a drag
         mouse.move(*_abs(a, "x", "y"))
+        time.sleep(0.05)
         mouse.press(b)
+        time.sleep(float(a.get("hold_ms", 120)) / 1000)
         x0, y0 = mouse.x, mouse.y
         x1, y1 = _abs(a, "to_x", "to_y")
-        steps = int(a.get("steps", 12))
+        steps = int(a.get("steps", 24))
         for i in range(1, steps + 1):
             mouse.move(x0 + (x1 - x0) * i // steps, y0 + (y1 - y0) * i // steps)
-            time.sleep(0.01)
+            time.sleep(0.016)
+        time.sleep(0.1)
         mouse.release(b)
+    elif t == "mouse_down":
+        mouse.press(a.get("button", "left"))
+    elif t == "mouse_up":
+        mouse.release(a.get("button", "left"))
+    elif t == "glide":   # frame-paced move (for a drag with the button already held)
+        x0, y0 = _abs(a, "x", "y")
+        x1, y1 = _abs(a, "to_x", "to_y")
+        steps = int(a.get("steps", 24))
+        for i in range(1, steps + 1):
+            mouse.move(x0 + (x1 - x0) * i // steps, y0 + (y1 - y0) * i // steps)
+            time.sleep(0.016)
     elif t == "scroll":
         if "x" in a:
             mouse.move(*_abs(a, "x", "y"))

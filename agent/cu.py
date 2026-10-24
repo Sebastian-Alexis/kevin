@@ -41,9 +41,10 @@ TOOL = {"name": "computer", "input_schema": {
     "properties": {
         "action": {"type": "string", "enum": ["key", "type", "mouse_move", "left_click", "left_click_drag", "right_click",
                                                "middle_click", "double_click", "triple_click", "screenshot",
-                                               "cursor_position", "scroll", "wait", "zoom"]},
+                                               "cursor_position", "scroll", "wait", "zoom", "left_mouse_down",
+                                               "left_mouse_up"]},
         "coordinate": {"type": "array", "items": {"type": "integer"}, "description": "[x, y] pixels of the screenshot"},
-        "start_coordinate": {"type": "array", "items": {"type": "integer"}, "description": "left_click_drag: where to press"},
+        "start_coordinate": {"type": "array", "items": {"type": "integer"}, "description": "left_click_drag: where to press (default: the current pointer position)"},
         "text": {"type": "string", "description": "type: the text; key: the key combo, e.g. cmd+l, Return, ctrl+shift+t"},
         "scroll_direction": {"type": "string", "enum": ["up", "down", "left", "right"]},
         "scroll_amount": {"type": "integer", "description": "scroll: number of wheel ticks (1 tick ~ 55 px; a screenful ~13)"},
@@ -72,6 +73,7 @@ class Session:
         self.save_dir, self.log, self.keep_images, self.max_side = save_dir, log, keep_images, max_side
         self.gate, self.task, self.typed = gate, task, None   # gate: VLM judging where typed text landed before Enter
         self.stop = False        # set by a caller to abort the loop between turns (and before each batch)
+        self.pointer = None      # last pointer position as a screenshot fraction (drags start from here)
         self.launcher = False    # the OS launcher (Spotlight/Raycast) was just opened: typing and Return need its pace
         self.after_key = False   # the last action was a key combo: a UI it opened needs to settle before text is typed
         self.frame = None        # the frame the last batch settled on
@@ -120,6 +122,7 @@ class Session:
         a = inp.get("action")
         if a in ("left_click", "right_click", "middle_click", "double_click", "triple_click", "mouse_move"):
             fx, fy = self.frac(inp.get("coordinate"))
+            self.pointer = (fx, fy)
             acts = [{"type": "move", "x": max(0.0, fx - 0.004), "y": fy}, {"type": "wait", "ms": 20},
                     {"type": "move", "x": fx, "y": fy}, {"type": "wait", "ms": 40}]
             if a != "mouse_move":
@@ -129,9 +132,30 @@ class Session:
             self.kvm.actions(acts)
             self.typed, self.launcher = None, False
         elif a == "left_click_drag":
-            sx, sy = self.frac(inp.get("start_coordinate") or inp.get("coordinate"))
+            # the trained convention: press at start_coordinate if given, else where the pointer is, drag to coordinate
             ex, ey = self.frac(inp.get("coordinate"))
+            if inp.get("start_coordinate"):
+                sx, sy = self.frac(inp["start_coordinate"])
+            elif self.pointer:
+                sx, sy = self.pointer
+            else:
+                raise ValueError("left_click_drag needs start_coordinate (the pointer position is unknown)")
+            if (sx, sy) == (ex, ey):
+                raise ValueError("drag start and end are the same point; give start_coordinate")
             self.kvm.actions([{"type": "drag", "x": sx, "y": sy, "to_x": ex, "to_y": ey, "button": "left"}])
+            self.pointer = (ex, ey)
+        elif a == "left_mouse_down":
+            if inp.get("coordinate"):
+                self.pointer = self.frac(inp["coordinate"])
+                self.kvm.actions([{"type": "move", "x": self.pointer[0], "y": self.pointer[1]}, {"type": "wait", "ms": 50}])
+            self.kvm.actions([{"type": "mouse_down", "button": "left"}])
+        elif a == "left_mouse_up":
+            if inp.get("coordinate"):
+                ex, ey = self.frac(inp["coordinate"])
+                sx, sy = self.pointer or (ex, ey)
+                self.kvm.actions([{"type": "glide", "x": sx, "y": sy, "to_x": ex, "to_y": ey}])
+                self.pointer = (ex, ey)
+            self.kvm.actions([{"type": "mouse_up", "button": "left"}])
         elif a == "type":
             text = str(inp.get("text", ""))
             enter = text.endswith("\n")
@@ -160,7 +184,8 @@ class Session:
             else:
                 self.kvm.actions([{"type": "key", "combo": c}])
                 self.typed = None
-                self.launcher = False
+                if c not in ("cmd+a", "backspace", "delete", "up", "down", "left", "right", "shift+tab", "tab"):
+                    self.launcher = False   # editing keys keep the launcher open; anything else leaves it
         elif a == "scroll":
             fx, fy = self.frac(inp.get("coordinate") or [self.size[0] // 2, self.size[1] // 2])
             n = int(inp.get("scroll_amount") or 3)
