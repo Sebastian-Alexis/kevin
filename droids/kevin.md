@@ -1,6 +1,6 @@
 ---
-name: computer
-description: Drives the computer plugged into the ai-kvm (screen over HDMI, keyboard and mouse over USB). Use for any task that must be done on that computer.
+name: kevin
+description: KEVIN, the KVM dongle: drives the computer it is plugged into (screen over HDMI, keyboard and mouse over USB). Use for any task that must be done on that computer.
 model: inherit
 tools: ["Execute"]
 ---
