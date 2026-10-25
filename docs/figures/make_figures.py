@@ -249,7 +249,7 @@ def fig_memory(logos):
     axb.legend(loc="upper left", fontsize=8)
     footer(fig, logos, "(a) Same Connections puzzle: grounded loop (plan → Holo4 grounding → verify) vs. the native Anthropic computer tool loop; "
                        "the other bars are native-loop runs from the KVM. (b) Second visit to a known Mac: success-only notes recalled from Moss "
-                       "(index ai-kvm-playbook) cut turns 35–70%. t = planner turns.")
+                       "(index ai-kvm-playbook) cut turns 17–71% (median 44%). t = planner turns.")
     save(fig, "fig-loop-and-memory")
 
 
