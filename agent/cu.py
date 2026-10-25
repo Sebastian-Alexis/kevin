@@ -91,7 +91,7 @@ class Session:
         deadline = time.monotonic() + 6
         while frame.size == PLACEHOLDER_SIZE:
             if time.monotonic() > deadline:
-                raise RuntimeError("no video from the computer (NO SIGNAL)")
+                raise RuntimeError(self.no_video_reason())
             time.sleep(0.5)
             frame = self.kvm.screenshot()
         self.frame = frame
@@ -101,6 +101,19 @@ class Session:
             img = img.resize((round(img.width * s), round(img.height * s)))
         self.size = img.size
         return img
+
+    def no_video_reason(self):
+        """Name the leg that is missing, so an unplugged cable does not read as the KVM refusing requests."""
+        try:
+            h = self.kvm.health()
+        except Exception:
+            return "KVM unreachable (no reply from its API)"
+        if h.get("usb") != "configured":
+            return "computer not attached: the USB leg is down (no host enumerated the KVM); replug the USB-C cable"
+        if not h.get("signal"):
+            return ("video leg not connected: USB is up but the KVM gets no HDMI signal (no display timing); reseat the "
+                    "HDMI/adapter at the KVM or the computer, and check the computer lists the KVM as a display")
+        return "no video frame from the KVM although it reports a signal"
 
     def shot_block(self, img, tag="shot"):
         self.n_shots += 1
