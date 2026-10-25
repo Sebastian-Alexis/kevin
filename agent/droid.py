@@ -114,14 +114,15 @@ async def run_task(task, mcp_url, model, report, log=print):
     cfg = SessionConfig(system_prompt=SYSTEM, disabled_tools=LOCAL_TOOLS,
                         mcp_servers=[HttpMcpServerConfig(name="ai-kvm", url=mcp_url)])
     # the task text may carry credentials ("sign in with password ..."): the report keeps a short, redacted head
-    head = task if len(task) <= 80 and not any(w in task.lower() for w in ("password", "passcode", "pin ", "secret", "token")) else f"{task[:40]}… ({len(task)} chars)"
+    sensitive = any(w in task.lower() for w in ("password", "passcode", "pin ", "secret", "token", "credential"))
+    head = f"(task withheld: {len(task)} chars)" if sensitive else (task if len(task) <= 80 else f"{task[:60]}… ({len(task)} chars)")
     report.write(f"# {head}\n\nplanner `{model}` · KVM MCP `{mcp_url}` · {time.strftime('%Y-%m-%d %H:%M:%S')}")
     report.event("start", task_chars=len(task), model=model, mcp=mcp_url)
     t0 = time.monotonic()
     async with Session(cwd=os.getcwd(), model=model, config=cfg,
                        interactions=InteractionHandlers(on_permission=permission)) as session:
         # a manually set title skips Droid's own title-generation call (a 4 s model round trip per run)
-        await session.rename(f"ai-kvm: {task[:60]}")
+        await session.rename("ai-kvm run" if sensitive else f"ai-kvm: {task[:60]}")
         report.event("session", id=session.id)
         async with session.stream(task) as stream:
             async for m in stream:
@@ -177,7 +178,7 @@ async def watch_inbox(inbox, mcp_url, model, state_file, log=print):
             path = os.path.join(inbox, tasks[0])
             with open(path) as f:
                 task = f.read().strip()
-            log(f"task {name}: {task[:120]}")
+            log(f"task {name}: {len(task)} chars")
             report = Report(os.path.join(inbox, name))
             try:
                 result = await run_task(task, mcp_url, model, report, log)
