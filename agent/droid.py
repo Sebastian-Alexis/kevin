@@ -113,8 +113,10 @@ async def run_task(task, mcp_url, model, report, log=print):
 
     cfg = SessionConfig(system_prompt=SYSTEM, disabled_tools=LOCAL_TOOLS,
                         mcp_servers=[HttpMcpServerConfig(name="ai-kvm", url=mcp_url)])
-    report.write(f"# {task}\n\nplanner `{model}` · KVM MCP `{mcp_url}` · {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    report.event("start", task=task, model=model, mcp=mcp_url)
+    # the task text may carry credentials ("sign in with password ..."): the report keeps a short, redacted head
+    head = task if len(task) <= 80 and not any(w in task.lower() for w in ("password", "passcode", "pin ", "secret", "token")) else f"{task[:40]}… ({len(task)} chars)"
+    report.write(f"# {head}\n\nplanner `{model}` · KVM MCP `{mcp_url}` · {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    report.event("start", task_chars=len(task), model=model, mcp=mcp_url)
     t0 = time.monotonic()
     async with Session(cwd=os.getcwd(), model=model, config=cfg,
                        interactions=InteractionHandlers(on_permission=permission)) as session:
