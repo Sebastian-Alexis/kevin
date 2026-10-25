@@ -262,7 +262,7 @@ def fig_judge(logos):
     h = [19 / 20 * 100, 4 / 8 * 100]
     x = np.arange(2)
     w = 0.36
-    ax.bar(x - w / 2, q, w, color=BLUE, label="Qwen 2.7 (local vLLM)")
+    ax.bar(x - w / 2, q, w, color=BLUE, label="Qwen3.8-27B (local vLLM)")
     ax.bar(x + w / 2, h, w, color=PURPLE, label="Holo4 (local vLLM)")
     for xi, a, b in zip(x, q, h):
         ax.text(xi - w / 2, a + 1.5, f"{a:.0f}%", ha="center", fontsize=9)
@@ -286,7 +286,7 @@ def fig_judge(logos):
     ax2.set_ylabel("seconds per judgement (GB10, local)")
     ax2.set_title("(b) Judge latency", fontsize=10.5)
     footer(fig, logos, "The Enter gate runs before every Return the planner sends while text is pending: a local VLM confirms the text landed in the "
-                       "field the task wanted. Qwen 2.7 is the gate/verifier/lesson-writer in production; Holo4 is kept as the grounder only. "
+                       "field the task wanted. Qwen3.8-27B is the gate/verifier/lesson-writer in production; Holo4 is kept as the grounder only. "
                        "Trials and caveats: docs/judge-ab-2026-10-24.md.")
     save(fig, "fig-judge")
 
