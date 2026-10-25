@@ -176,7 +176,7 @@ def fig_edge(logos):
 
 
 def fig_latency(logos, trace):
-    rows = [l.split() for l in open(trace) if l.startswith("anthropic/")]
+    rows = [l.split() for l in open(trace) if l.startswith("anthropic/") and int(l.split()[3]) >= 1]  # steps with a screenshot
     lat = {m: np.array([float(r[1]) for r in rows if r[0] == m]) for m in set(r[0] for r in rows)}
     outs = {m: np.array([int(r[2]) for r in rows if r[0] == m]) for m in lat}
     son = "anthropic/claude-sonnet-5-5"
@@ -207,8 +207,8 @@ def fig_latency(logos, trace):
     ax2.set_ylim(0, 12)
     ax2.set_title("Latency scales with output", fontsize=10.5)
     ax2.legend(loc="upper left", fontsize=8, markerscale=1.8)
-    footer(fig, logos, "Source: omp-gateway trace of every /v1/messages call made by the KEVIN loop and the Droid/Factory sessions on 2026-10-24 "
-                       "(thinking off, image history trimmed to 3, max_tokens 1500). Short decisions (<150 output tokens) take ~2.1 s; "
+    footer(fig, logos, "Source: omp-gateway trace, 2026-10-24: every planner call that carried a screenshot (the computer-use steps of the KEVIN loop, "
+                       "direct and via run(task) over MCP); Droid-app chat calls without images are excluded. Thinking off, image history trimmed to 3, max_tokens 1500. Short decisions (<150 output tokens) take ~2.1 s; "
                        "multi-action plans (≥300 tokens) ~3.9 s. The step time seen by the user adds ~0.3–1 s of HID action + HDMI settle.")
     save(fig, "fig-planner-latency")
 
@@ -286,7 +286,8 @@ def fig_judge(logos):
     ax2.set_ylabel("seconds per judgement (GB10, local)")
     ax2.set_title("(b) Judge latency", fontsize=10.5)
     footer(fig, logos, "The Enter gate runs before every Return the planner sends while text is pending: a local VLM confirms the text landed in the "
-                       "field the task wanted. Qwen 2.7 is the gate/verifier/lesson-writer in production; Holo4 is kept as the grounder only.")
+                       "field the task wanted. Qwen 2.7 is the gate/verifier/lesson-writer in production; Holo4 is kept as the grounder only. "
+                       "Trials and caveats: docs/judge-ab-2026-10-24.md.")
     save(fig, "fig-judge")
 
 

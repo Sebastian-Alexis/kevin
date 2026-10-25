@@ -7,6 +7,7 @@ frame). The absolute HID pointer spans exactly that picture, so 0-1000 maps stra
 import io
 import json
 import time
+import urllib.error
 import urllib.request
 
 from PIL import Image, ImageChops, ImageStat
@@ -32,8 +33,18 @@ class KVM:
     def actions(self, actions):
         req = urllib.request.Request(self.base + "/actions", json.dumps({"actions": actions}).encode(),
                                      {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=max(self.timeout, 60)) as r:
-            return json.load(r)
+        try:
+            with urllib.request.urlopen(req, timeout=max(self.timeout, 60)) as r:
+                return json.load(r)
+        except urllib.error.HTTPError as e:
+            # the Pi answers 4xx with {"error": ..., "failed_index": i}; keep that instead of a bare "Bad Request"
+            try:
+                body = json.loads(e.read().decode())
+            except Exception:
+                raise
+            i = body.get("failed_index")
+            where = f" at action {i} ({actions[i].get('type')})" if isinstance(i, int) and i < len(actions) else ""
+            raise RuntimeError(f"KVM refused the batch{where}: {body.get('error', e.reason)}") from None
 
 
 def frame(kvm):
