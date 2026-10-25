@@ -70,9 +70,17 @@ def _write(obj, buf):
     Blocks at most WRITE_TIMEOUT for the host to poll the endpoint; raises HostNotConnected otherwise.
     Reopens once if the host re-enumerated (ENODEV/ESHUTDOWN).
     """
-    for attempt in (0, 1):
+    deadline = time.monotonic() + 3.0   # a replug re-enumerates for ~1-2 s: keep reopening until the host is back
+    attempt = 0
+    while True:
         if getattr(obj, "fd", None) is None:
-            obj.fd = os.open(obj.dev, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
+            try:
+                obj.fd = os.open(obj.dev, os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
+            except OSError:
+                if time.monotonic() > deadline:
+                    raise
+                time.sleep(0.1)
+                continue
         try:
             os.write(obj.fd, buf)
             return
@@ -83,10 +91,15 @@ def _write(obj, buf):
             os.write(obj.fd, buf)
             return
         except OSError:
-            os.close(obj.fd)
+            try:
+                os.close(obj.fd)
+            except OSError:
+                pass
             obj.fd = None
-            if attempt:
+            attempt += 1
+            if time.monotonic() > deadline:
                 raise
+            time.sleep(0.1)
 
 
 class Keyboard:
