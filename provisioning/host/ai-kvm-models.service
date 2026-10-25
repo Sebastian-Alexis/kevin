@@ -3,7 +3,7 @@ Description=ai-kvm host forwards: local vLLM (qwen27 :8000, Holo4 :8010) to the 
 After=network.target
 
 [Service]
-ExecStart=/bin/sh -c 'socat TCP-LISTEN:8000,bind=10.42.0.1,fork,reuseaddr TCP:127.0.0.1:8000 & socat TCP-LISTEN:8010,bind=10.42.0.1,fork,reuseaddr TCP:127.0.0.1:8010 & exec socat TCP-LISTEN:8090,bind=100.93.148.36,fork,reuseaddr TCP:10.42.0.101:8090'
+ExecStart=/bin/sh -c 'socat TCP-LISTEN:8000,bind=100.93.148.36,fork,reuseaddr TCP:127.0.0.1:8000 & socat TCP-LISTEN:8010,bind=100.93.148.36,fork,reuseaddr TCP:127.0.0.1:8010 & exec socat TCP-LISTEN:8090,bind=100.93.148.36,fork,reuseaddr TCP:100.98.36.92:8090'
 Restart=always
 RestartSec=2
 

@@ -375,7 +375,7 @@ class Session:
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python3 -m agent.cu", description=__doc__.splitlines()[0])
     p.add_argument("task")
-    p.add_argument("--kvm", default=os.environ.get("AIKVM_URL", "http://10.42.0.101:8080"))
+    p.add_argument("--kvm", default=os.environ.get("AIKVM_URL", "http://100.98.36.92:8080"))
     p.add_argument("--llm", default=os.environ.get("AIKVM_ANTHROPIC_BASE", "http://127.0.0.1:4001/v1"), help="Anthropic Messages-compatible base")
     p.add_argument("--model", default=os.environ.get("AIKVM_CU_MODEL", "anthropic/claude-sonnet-5-5"))
     p.add_argument("--key-file", default=None, help="key for --llm (the local gateway needs none)")

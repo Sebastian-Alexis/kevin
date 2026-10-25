@@ -3,7 +3,7 @@
 # /tmp/piwheels, the Pi has no internet), the model API key, and the systemd unit.
 #   bash agent/deploy-mcp.sh [kvm@10.42.0.101]
 set -eu
-PI=${1:-kvm@10.42.0.101}
+PI=${1:-kvm@100.98.36.92}
 cd "$(dirname "$0")/.."
 rsync -a --delete --exclude __pycache__ agent/ "$PI:/tmp/agent/"
 rsync -a /tmp/piwheels/ "$PI:/tmp/piwheels/" 2>/dev/null || true

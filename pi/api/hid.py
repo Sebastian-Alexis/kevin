@@ -70,7 +70,7 @@ def _write(obj, buf):
     Blocks at most WRITE_TIMEOUT for the host to poll the endpoint; raises HostNotConnected otherwise.
     Reopens once if the host re-enumerated (ENODEV/ESHUTDOWN).
     """
-    deadline = time.monotonic() + 3.0   # a replug re-enumerates for ~1-2 s: keep reopening until the host is back
+    deadline = time.monotonic() + 1.5   # a replug re-enumerates for ~1 s: keep reopening until the host is back
     attempt = 0
     while True:
         if getattr(obj, "fd", None) is None:

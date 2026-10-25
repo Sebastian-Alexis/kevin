@@ -7,7 +7,7 @@ User=jpa
 EnvironmentFile=/etc/ai-kvm/moss.env
 Environment=HOME=/home/jpa
 WorkingDirectory=/home/jpa/Programming/ai-kvm
-ExecStart=/home/jpa/Programming/ai-kvm/.venv-droid/bin/python -m agent.memory --serve 127.0.0.1:8020 --serve 10.42.0.1:8020
+ExecStart=/home/jpa/Programming/ai-kvm/.venv-droid/bin/python -m agent.memory --serve 127.0.0.1:8020 --serve 10.42.0.1:8020 --serve 100.93.148.36:8020
 Restart=always
 RestartSec=3
 

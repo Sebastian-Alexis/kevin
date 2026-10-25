@@ -57,7 +57,7 @@ def write_state(path, state):
 
 def main(argv=None):
     p = argparse.ArgumentParser(prog="python3 -m agent.daemon", description=__doc__.splitlines()[0])
-    p.add_argument("--kvm", default=os.environ.get("AIKVM_URL", "http://10.42.0.101:8080"))
+    p.add_argument("--kvm", default=os.environ.get("AIKVM_URL", "http://100.98.36.92:8080"))
     p.add_argument("--llm", default=os.environ.get("AIKVM_LLM_BASE", "http://127.0.0.1:8000/v1"))
     p.add_argument("--model", default=os.environ.get("AIKVM_LLM_MODEL", "qwen27"))
     p.add_argument("--key-file", default=os.environ.get("AIKVM_LLM_KEY_FILE", "/etc/gemma4-vllm-api-key"))

@@ -17,7 +17,7 @@ PLACEHOLDER_SIZE = (640, 480)   # ustreamer's "NO SIGNAL" frame
 
 
 class KVM:
-    def __init__(self, base="http://10.42.0.101:8080", timeout=15):
+    def __init__(self, base="http://100.98.36.92:8080", timeout=15):
         self.base = base.rstrip("/")
         self.timeout = timeout
 

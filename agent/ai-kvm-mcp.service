@@ -6,7 +6,7 @@ Wants=ai-kvm-api.service
 [Service]
 WorkingDirectory=/opt/ai-kvm
 ExecStart=/opt/ai-kvm/venv/bin/python -m agent.kvm_mcp --http 0.0.0.0:8090
-Environment=AIKVM_PLANNER_BASE=http://10.42.0.1:4001/v1 AIKVM_PLANNER_MODEL=anthropic/claude-sonnet-5-5 AIKVM_MEMORY=http://10.42.0.1:8020 AIKVM_COMPUTER=mac AIKVM_URL=http://127.0.0.1:8080 AIKVM_LLM_BASE=http://10.42.0.1:8000/v1 AIKVM_GROUNDER=http://10.42.0.1:8010/v1 AIKVM_LLM_KEY_FILE=/etc/ai-kvm/llm-key AIKVM_RUNS=/var/lib/ai-kvm/runs
+Environment=AIKVM_PLANNER_BASE=http://100.93.148.36:4001/v1 AIKVM_PLANNER_MODEL=anthropic/claude-sonnet-5-5 AIKVM_MEMORY=http://100.93.148.36:8020 AIKVM_COMPUTER=mac AIKVM_URL=http://127.0.0.1:8080 AIKVM_LLM_BASE=http://100.93.148.36:8000/v1 AIKVM_GROUNDER=http://100.93.148.36:8010/v1 AIKVM_LLM_KEY_FILE=/etc/ai-kvm/llm-key AIKVM_RUNS=/var/lib/ai-kvm/runs
 Restart=always
 RestartSec=2
 
